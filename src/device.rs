@@ -19,7 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 use serialport::{SerialPortInfo, SerialPortType};
 
 /// コンピューターに接続されて利用可能なシリアルポートデバイス一覧を取得する
-fn available_list() -> Vec<SerialPortInfo> {
+pub fn available_list() -> Vec<SerialPortInfo> {
     serialport::available_ports()
         .unwrap_or(Vec::new())
         .into_iter()
@@ -28,7 +28,7 @@ fn available_list() -> Vec<SerialPortInfo> {
 }
 
 /// デバイス一覧の抽出の実装
-trait SerialPortInfoExt {
+pub trait SerialPortInfoExt {
     fn arduino_only(self) -> Vec<SerialPortInfo>;
 }
 
