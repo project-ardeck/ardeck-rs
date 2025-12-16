@@ -1,0 +1,13 @@
+[package]
+name = "libardeck"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+syn = "2.0.111"
+quote = "1.0.40"
+proc-macro2 = "1.0.103"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.48.0", features = ["full"] }
+serialport = "4.8.1"
