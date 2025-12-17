@@ -16,6 +16,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+pub mod switch;
+
 use serialport::{SerialPortInfo, SerialPortType};
 
 /// コンピューターに接続されて利用可能なシリアルポートデバイス一覧を取得する
@@ -47,3 +49,5 @@ impl SerialPortInfoExt for Vec<SerialPortInfo> {
             .collect()
     }
 }
+
+
