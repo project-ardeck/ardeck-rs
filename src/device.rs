@@ -18,30 +18,57 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod switch;
 
-use serialport::{SerialPortInfo, SerialPortType};
+use serialport::{SerialPortType, UsbPortInfo};
 
-/// コンピューターに接続されて利用可能なシリアルポートデバイス一覧を取得する
-pub fn available_list() -> Vec<SerialPortInfo> {
-    serialport::available_ports()
-        .unwrap_or(Vec::new())
-        .into_iter()
-        .filter(|port| matches!(port.port_type, SerialPortType::UsbPort(_)))
-        .collect()
+/// コンピューターに接続されて利用可能なシリアルポートデバイスの情報
+pub struct AvailableDeviceInfo {
+    /// ポート名
+    pub port_name: String,
+    /// 取得できたポート情報
+    pub usb_port_info: UsbPortInfo,
+    /// ポート情報から生成されたデバイスID
+    pub device_id: String,
 }
 
-/// デバイス一覧の抽出の実装
-pub trait SerialPortInfoExt {
-    fn arduino_only(self) -> Vec<SerialPortInfo>;
+impl AvailableDeviceInfo {
+    /// 接続可能なUSB Port一覧を取得する
+    /// # Example
+    /// ```
+    /// let device = AvailableDeviceInfo::list();
+    /// ```
+    pub fn list() -> Vec<Self> {
+        serialport::available_ports()
+            .unwrap_or(Vec::new())
+            .into_iter()
+            .filter_map(|port| match &port.port_type {
+                SerialPortType::UsbPort(e) => Some(Self {
+                    port_name: port.port_name.clone(),
+                    usb_port_info: e.clone(),
+                    device_id: "TODO".into(), // TODO: ID生成
+                }),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
-impl SerialPortInfoExt for Vec<SerialPortInfo> {
+/// デバイス一覧の実装
+pub trait AvailableDeviceInfoList {
+    fn arduino_only(self) -> Vec<AvailableDeviceInfo>;
+}
+
+impl AvailableDeviceInfoList for Vec<AvailableDeviceInfo> {
     /// デバイス一覧のうち、arduinoのベンダーコードを持つデバイスだけを抽出する
-    fn arduino_only(self) -> Vec<SerialPortInfo> {
+    /// # Example
+    /// ```
+    /// let device = AvailableDeviceInfo::list().arduino_only();
+    /// ```
+    fn arduino_only(self) -> Vec<AvailableDeviceInfo> {
         self.into_iter()
             .filter(|port| {
-                if let SerialPortType::UsbPort(info) = &port.port_type {
-                    // 9025: Vendor code of Arduino SA
-                    if info.vid == 9025 { true } else { false }
+                // 9025: Arduino LA のベンダーID
+                if port.usb_port_info.vid == 9025 {
+                    true
                 } else {
                     false
                 }
@@ -49,5 +76,3 @@ impl SerialPortInfoExt for Vec<SerialPortInfo> {
             .collect()
     }
 }
-
-
