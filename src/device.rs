@@ -1,6 +1,6 @@
 /*
 libardeck - This is an all-in-one library for communicating with ardeck and integrating with computers.
-Copyright (C) 2025 Project Ardeck
+Copyright (C) 2026 Project Ardeck
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod switch;
 
-use serialport::{SerialPortType, UsbPortInfo};
+use serialport::{SerialPort, SerialPortType, UsbPortInfo};
 
 /// コンピューターに接続されて利用可能なシリアルポートデバイスの情報
 pub struct AvailableDeviceInfo {
@@ -74,5 +74,45 @@ impl AvailableDeviceInfoList for Vec<AvailableDeviceInfo> {
                 }
             })
             .collect()
+    }
+}
+
+#[derive(Debug)]
+enum ArdeckConnectionErrorKind {
+    AlreadyConnected,
+    NotConnected,
+    SerialPort(serialport::Error),
+}
+
+/// コネクションのハンドラー
+#[derive(Debug)]
+enum ArdeckConnectionHandlerType {
+    /// 接続済み
+    Connected,
+    /// 切断済み
+    Disconnected,
+    /// 通信中にエラーが発生
+    Error,
+}
+
+pub type ArdeckConnectionHandler = Box<dyn Fn(ArdeckConnectionHandlerType) + Send + Sync + 'static>;
+
+/// Ardeckとの通信を制御したり、データを処理したりする
+struct ArdeckConnection {
+    device_id: String,
+    serialport: Box<dyn SerialPort>,
+    handler: Option<ArdeckConnectionHandler>,
+}
+
+impl ArdeckConnection {
+    pub fn new(
+        port_name: String,
+        baud_rate: u32,
+        device_id: String,
+        handler: Option<ArdeckConnectionHandler>,
+    ) -> Self {
+        serialport::new(port_name, baud_rate).open();
+
+        ArdeckConnection { device_id, handler }
     }
 }

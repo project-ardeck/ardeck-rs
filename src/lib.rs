@@ -1,6 +1,6 @@
 /*
 libardeck - This is an all-in-one library for communicating with ardeck and integrating with computers.
-Copyright (C) 2025 Project Ardeck
+Copyright (C) 2026 Project Ardeck
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
