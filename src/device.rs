@@ -1,6 +1,20 @@
 pub mod switch;
 
+use std::fmt;
+
 use serialport::{SerialPort, SerialPortType, UsbPortInfo};
+
+/// デバイスのハードウェア固有番号を使用して、識別番号を作成する
+fn make_device_id(port_info: &UsbPortInfo) -> String {
+    if let Some(serial_number) = &port_info.serial_number {
+        format!(
+            "{:04X}-{:04X}-{}",
+            port_info.vid, port_info.pid, serial_number
+        )
+    } else {
+        format!("{:04X}-{:04X}", port_info.vid, port_info.pid)
+    }
+}
 
 /// コンピューターに接続されて利用可能なシリアルポートデバイスの情報
 pub struct AvailableDeviceInfo {
@@ -25,7 +39,7 @@ pub fn available_list() -> Vec<AvailableDeviceInfo> {
             SerialPortType::UsbPort(e) => Some(AvailableDeviceInfo {
                 port_name: port.port_name.clone(),
                 usb_port_info: e.clone(),
-                device_id: "TODO".into(), // TODO: ID生成
+                device_id: make_device_id(&e),
             }),
             _ => None,
         })
@@ -45,40 +59,50 @@ impl AvailableDeviceInfoList for Vec<AvailableDeviceInfo> {
     /// ```
     fn arduino_only(self) -> Vec<AvailableDeviceInfo> {
         self.into_iter()
-            .filter(|port| {
-                // 9025: Arduino LA のベンダーID
-                if port.usb_port_info.vid == 9025 {
-                    true
-                } else {
-                    false
-                }
-            })
+            // 9025: Arduino LA のベンダーID
+            .filter(|port| port.usb_port_info.vid == 9025)
             .collect()
     }
 }
 
 #[derive(Debug)]
-enum ArdeckConnectionErrorKind {
-    AlreadyConnected,
-    NotConnected,
-    SerialPort(serialport::Error),
+enum ConnectionErrorKind {
+    /// 初期化に失敗した。シリアルポートへのアクセスに失敗した可能性が高い。
+    InitializationFailed,
+    /// 通信中に接続を失った。
+    ConnectionLost,
+    // NotConnected,
+    // SerialPort(serialport::Error),
+}
+
+impl fmt::Display for ConnectionErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::InitializationFailed => write!(f, "Initialization failed."),
+            Self::ConnectionLost => write!(f, "Connection lost during communication."),
+            // Self::NotConnected => write!(f, ""),
+            // ConnectionErrorKind::SerialPort(e) => ,
+        }
+    }
 }
 
 /// コネクションのハンドラー
 #[derive(Debug)]
-enum ArdeckConnectionHandlerType {
+enum ConnectionHandlerType {
+    /// 初回接続中、または再接続中
+    Connecting,
     /// 接続済み
     Connected,
     /// 切断済み
     Disconnected,
     /// 通信中にエラーが発生
-    Error,
+    Error(ConnectionErrorKind),
 }
 
-pub type ArdeckConnectionHandler = Box<dyn Fn(ArdeckConnectionHandlerType) + Send + Sync + 'static>;
+pub type ArdeckConnectionHandler = Box<dyn Fn(ConnectionHandlerType) + Send + Sync + 'static>;
 
 /// Ardeckとの通信を制御したり、データを処理したりする
-struct ArdeckConnection {
+struct Connection {
     device_id: String,
     /// シリアルポートの接続
     serialport: Option<Box<dyn SerialPort>>,
@@ -89,7 +113,7 @@ struct ArdeckConnection {
 // - コネクションインスタンスが生成されると接続先を記録したインスタンスが生成される
 // - インスタンスが存在する間はシリアルポートが切断されても再接続を試みる
 // - 初回接続時に未接続ならばリトライ・アクセス拒否ならば初期化失敗としてインスタンスを生成しない
-impl ArdeckConnection {
+impl Connection {
     /// 接続
     pub fn new(
         port_name: String,
@@ -106,4 +130,9 @@ impl ArdeckConnection {
             Err(e) => device,
         };
     }
+}
+
+struct ConnectionBuilder {
+    port_name: String,
+    baud_rate: u32,
 }
