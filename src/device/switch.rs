@@ -17,7 +17,7 @@ impl Default for SwitchKind {
 }
 
 /// デバイスによって押されたスイッチの情報を保持する構造体
-#[derive(Clone, Deserialize, Serialize, Debug, Default)]
+#[derive(Clone, Deserialize, Serialize, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SwitchInfo {
     /// スイッチの種類
@@ -27,5 +27,5 @@ pub struct SwitchInfo {
     /// スイッチの状態を表す数値
     pub state: u16,
     /// データが取得された時刻(正確には)
-    pub timestamp: i64,
+    pub timestamp_micros: i64,
 }
