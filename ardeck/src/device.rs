@@ -87,9 +87,10 @@ impl fmt::Display for ConnectionErrorKind {
     }
 }
 
-/// コネクションのハンドラー
 #[derive(Debug)]
-enum ConnectionHandlerType {
+enum ConnectionState {
+    /// 待機状態
+    Standby,
     /// 初回接続中、または再接続中
     Connecting,
     /// 接続済み
@@ -100,14 +101,35 @@ enum ConnectionHandlerType {
     Error(ConnectionErrorKind),
 }
 
-pub type ArdeckConnectionHandler = Box<dyn Fn(ConnectionHandlerType) + Send + Sync + 'static>;
+pub type ArdeckConnectionHandler = Box<dyn Fn(ConnectionState) + Send + Sync + 'static>;
 
 /// Ardeckとの通信を制御したり、データを処理したりする
-struct Connection {
+pub struct Connection {
     device_id: String,
     /// シリアルポートの接続
     serialport: Option<Box<dyn SerialPort>>,
+    port_name: String,
+    baud_rate: u32,
+
+    state: ConnectionState,
     handler: Option<ArdeckConnectionHandler>,
+    // recv_seqence:
+}
+
+impl Connection {
+    fn new(device_id: String, port_name: String, baud_rate: u32) -> Self {
+        Self {
+            device_id,
+            serialport: None,
+            baud_rate,
+            port_name,
+            state: ConnectionState::Standby,
+            handler: None,
+        }
+    }
+
+    /// 指定した端末への通信を開始します。
+    pub fn start() {}
 }
 
 // DRAFT:
