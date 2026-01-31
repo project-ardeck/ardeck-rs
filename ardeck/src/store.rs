@@ -1,5 +1,9 @@
 use std::{path::PathBuf, sync::OnceLock};
 
+use serde::{Serialize, de::DeserializeOwned};
+
+use crate::config::ConfigFile;
+
 static STORE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn get_store_path() -> PathBuf {
@@ -21,5 +25,22 @@ impl StoreBuilder {
 
     pub fn init(self) {
         STORE_PATH.set(self.path).unwrap();
+    }
+}
+
+pub trait StoreTrait: Serialize + DeserializeOwned + ConfigFile + Clone + Send + Sync {
+    fn path() -> PathBuf {
+        STORE_PATH.get().unwrap().join(Self::name())
+    }
+
+    fn load() -> Result<Self, std::io::Error> {
+        if !Self::path().try_exists()? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "File is Not found.",
+            ));
+        }
+
+        Ok(Self::default())
     }
 }

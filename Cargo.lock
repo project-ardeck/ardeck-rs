@@ -30,8 +30,11 @@ dependencies = [
 name = "ardeck_derive"
 version = "0.1.0"
 dependencies = [
+ "ardeck",
  "proc-macro2",
  "quote",
+ "serde",
+ "serde_json",
  "syn",
 ]
 
