@@ -23,6 +23,7 @@ dependencies = [
  "serde_json",
  "serialport",
  "syn",
+ "thiserror",
  "tokio",
 ]
 
