@@ -18,7 +18,7 @@ fn make_device_id(port_info: &UsbPortInfo) -> String {
 }
 
 /// コンピューターに接続されて利用可能なシリアルポートデバイスの情報
-pub struct AvailableDeviceInfo {
+pub struct DeviceInfo {
     /// ポート名
     pub port_name: String,
     /// 取得できたポート情報
@@ -32,12 +32,12 @@ pub struct AvailableDeviceInfo {
 /// ```
 /// let device = ardeck::device::available_list();
 /// ```
-pub fn available_list() -> Vec<AvailableDeviceInfo> {
+pub fn available_list() -> Vec<DeviceInfo> {
     serialport::available_ports()
         .unwrap_or(Vec::new())
         .into_iter()
         .filter_map(|port| match &port.port_type {
-            SerialPortType::UsbPort(e) => Some(AvailableDeviceInfo {
+            SerialPortType::UsbPort(e) => Some(DeviceInfo {
                 port_name: port.port_name.clone(),
                 usb_port_info: e.clone(),
                 device_id: make_device_id(&e),
@@ -48,17 +48,17 @@ pub fn available_list() -> Vec<AvailableDeviceInfo> {
 }
 
 /// デバイス一覧の実装
-pub trait AvailableDeviceInfoList {
-    fn arduino_only(self) -> Vec<AvailableDeviceInfo>;
+pub trait DeviceInfoList {
+    fn arduino_only(self) -> Vec<DeviceInfo>;
 }
 
-impl AvailableDeviceInfoList for Vec<AvailableDeviceInfo> {
+impl DeviceInfoList for Vec<DeviceInfo> {
     /// デバイス一覧のうち、arduinoのベンダーコードを持つデバイスだけを抽出する
     /// # Example
     /// ```
     /// let device = ardeck::device::available_list().arduino_only();
     /// ```
-    fn arduino_only(self) -> Vec<AvailableDeviceInfo> {
+    fn arduino_only(self) -> Vec<DeviceInfo> {
         self.into_iter()
             // 9025: Arduino LA のベンダーID
             .filter(|port| port.usb_port_info.vid == 9025)
@@ -67,28 +67,20 @@ impl AvailableDeviceInfoList for Vec<AvailableDeviceInfo> {
 }
 
 #[derive(Debug)]
-enum ConnectionErrorKind {
-    /// 初期化に失敗した。シリアルポートへのアクセスに失敗した可能性が高い。
-    InitializationFailed,
-    /// 通信中に接続を失った。
-    ConnectionLost,
-    // NotConnected,
-    // SerialPort(serialport::Error),
+enum SessionErrorKind {
+    InitializationError(String),
 }
 
-impl fmt::Display for ConnectionErrorKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Self::InitializationFailed => write!(f, "Initialization failed."),
-            Self::ConnectionLost => write!(f, "Connection lost during communication."),
-            // Self::NotConnected => write!(f, ""),
-            // ConnectionErrorKind::SerialPort(e) => ,
-        }
-    }
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    // #[error("Session error")]
+    // Session(#[from] SessionErrorKind),
+    #[error("Serialport error: `{0}`")]
+    Serialport(#[from] serialport::Error),
 }
 
 #[derive(Debug)]
-enum ConnectionState {
+enum SessionState {
     /// 待機状態
     Standby,
     /// 初回接続中、または再接続中
@@ -98,32 +90,32 @@ enum ConnectionState {
     /// 切断済み
     Disconnected,
     /// 通信中にエラーが発生
-    Error(ConnectionErrorKind),
+    Error(Error),
 }
 
-pub type ArdeckConnectionHandler = Box<dyn Fn(ConnectionState) + Send + Sync + 'static>;
+pub type ArdeckConnectionHandler = Box<dyn Fn(SessionState) + Send + Sync + 'static>;
 
 /// Ardeckとの通信を制御したり、データを処理したりする
-pub struct Connection {
+pub struct Session {
     device_id: String,
     /// シリアルポートの接続
     serialport: Option<Box<dyn SerialPort>>,
     port_name: String,
     baud_rate: u32,
 
-    state: ConnectionState,
+    state: SessionState,
     handler: Option<ArdeckConnectionHandler>,
     // recv_seqence:
 }
 
-impl Connection {
+impl Session {
     fn new(device_id: String, port_name: String, baud_rate: u32) -> Self {
         Self {
             device_id,
             serialport: None,
             baud_rate,
             port_name,
-            state: ConnectionState::Standby,
+            state: SessionState::Standby,
             handler: None,
         }
     }
@@ -136,26 +128,3 @@ impl Connection {
 // - コネクションインスタンスが生成されると接続先を記録したインスタンスが生成される
 // - インスタンスが存在する間はシリアルポートが切断されても再接続を試みる
 // - 初回接続時に未接続ならばリトライ・アクセス拒否ならば初期化失敗としてインスタンスを生成しない
-// impl Connection {
-//     /// 接続
-//     pub fn new(
-//         port_name: String,
-//         baud_rate: u32,
-//         device_id: String,
-//         handler: Option<ArdeckConnectionHandler>,
-//     ) -> Self {
-//         match serialport::new(port_name, baud_rate).open() {
-//             Ok(p) => Self {
-//                 device_id,
-//                 handler,
-//                 serialport: Some(p),
-//             },
-//             Err(e) => device,
-//         };
-//     }
-// }
-
-// struct ConnectionBuilder {
-//     port_name: String,
-//     baud_rate: u32,
-// }
