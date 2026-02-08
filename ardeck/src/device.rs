@@ -1,7 +1,7 @@
 pub mod dec;
 pub mod switch;
 
-use std::fmt;
+use std::{fmt, thread::sleep, time::Duration};
 
 use serialport::{SerialPort, SerialPortType, UsbPortInfo};
 
@@ -68,21 +68,31 @@ impl DeviceInfoList for Vec<DeviceInfo> {
 
 #[derive(Debug)]
 enum SessionErrorKind {
-    InitializationError(String),
+    InitializationError,
+    TimeOut,
+}
+
+impl fmt::Display for SessionErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InitializationError => write!(f, "Failed initialization."),
+            Self::TimeOut => write!(f, "Timeout."),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
-    // #[error("Session error")]
-    // Session(#[from] SessionErrorKind),
+    #[error("Session error: `{0}`")]
+    Session(SessionErrorKind),
     #[error("Serialport error: `{0}`")]
     Serialport(#[from] serialport::Error),
 }
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Debug)]
 enum SessionState {
-    /// 待機状態
-    Standby,
     /// 初回接続中、または再接続中
     Connecting,
     /// 接続済み
@@ -95,33 +105,110 @@ enum SessionState {
 
 pub type ArdeckConnectionHandler = Box<dyn Fn(SessionState) + Send + Sync + 'static>;
 
+/// セッションを作成する前に設定をおこないます。
+pub struct SessionBuilder {
+    device_info: DeviceInfo,
+    connect_attempt_limit: u16,
+    connect_retry_interval: Duration,
+}
+
+impl SessionBuilder {
+    pub fn new(device_info: DeviceInfo) -> Self {
+        Self {
+            device_info,
+            connect_attempt_limit: 0,
+            connect_retry_interval: Duration::ZERO,
+        }
+    }
+
+    pub fn connect_attempt_limit(mut self, connect_attempt_limit: u16) -> Self {
+        self.connect_attempt_limit = connect_attempt_limit;
+        self
+    }
+
+    pub fn connect_retry_interval(mut self, connect_retry_interval: Duration) -> Self {
+        self.connect_retry_interval = connect_retry_interval;
+        self
+    }
+}
+
 /// Ardeckとの通信を制御したり、データを処理したりする
 pub struct Session {
-    device_id: String,
+    /// 接続中のデバイス情報
+    device_info: DeviceInfo,
     /// シリアルポートの接続
     serialport: Option<Box<dyn SerialPort>>,
-    port_name: String,
-    baud_rate: u32,
-
+    /// 接続状況
     state: SessionState,
+    /// ハンドラー
     handler: Option<ArdeckConnectionHandler>,
+    /// 接続試行時の試行回数の最大値 0の時は制限を設けない
+    connect_attempt_limit: u16,
+    connect_retry_interval: Duration,
     // recv_seqence:
 }
 
 impl Session {
-    fn new(device_id: String, port_name: String, baud_rate: u32) -> Self {
+    fn new(device_info: DeviceInfo) -> Self {
         Self {
-            device_id,
+            device_info,
             serialport: None,
-            baud_rate,
-            port_name,
-            state: SessionState::Standby,
+            state: SessionState::Disconnected,
             handler: None,
+            connect_attempt_limit: 0,
+            connect_retry_interval: Duration::ZERO,
         }
     }
 
-    /// 指定した端末への通信を開始します。
-    pub fn start() {}
+    /// 接続時の試行回数の最大値を設定する。0なら制限しない
+    pub fn set_connect_attempt_limit(mut self, connect_attempt_limit: u16) -> Self {
+        self.connect_attempt_limit = connect_attempt_limit;
+        self
+    }
+
+    /// 接続時の試行回数の最大値
+    pub fn connect_attempt_limit(&self) -> u16 {
+        self.connect_attempt_limit
+    }
+
+    /// 接続時の再試行までの待機時間を設定する
+    pub fn set_connect_retry_interval(mut self, connect_retry_interval: Duration) -> Self {
+        self.connect_retry_interval = connect_retry_interval;
+        self
+    }
+
+    /// 接続時の再試行までの待機時間
+    pub fn connect_retry_interval(&self) -> Duration {
+        self.connect_retry_interval
+    }
+
+    pub fn connect(&self) -> Result<Box<dyn SerialPort>> {
+        let mut tryed: u16 = 0;
+        loop {
+            if let Some(port) = self.try_connect() {
+                return Ok(port);
+            }
+
+            if self.connect_attempt_limit != 0 {
+                tryed += 1;
+                if tryed <= self.connect_attempt_limit() {
+                    return Err(Error::Session(SessionErrorKind::TimeOut));
+                }
+            }
+
+            sleep(self.connect_retry_interval);
+        }
+    }
+
+    /// 接続試行
+    ///
+    /// 接続を試行します。成功すれば[`SerialPort`]を返し、失敗すれば[`Noneを返します`]
+    fn try_connect(&self) -> Option<Box<dyn SerialPort>> {
+        match serialport::new(&self.device_info.port_name, 9600).open() {
+            Ok(p) => Some(p),
+            Err(_e) => None,
+        }
+    }
 }
 
 // DRAFT:
