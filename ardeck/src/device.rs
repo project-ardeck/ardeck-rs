@@ -107,8 +107,11 @@ pub type ArdeckConnectionHandler = Box<dyn Fn(SessionState) + Send + Sync + 'sta
 
 /// セッションを作成する前に設定をおこないます。
 pub struct SessionBuilder {
+    /// デバイス情報
     device_info: DeviceInfo,
+    /// 接続の際に試行する最大回数
     connect_attempt_limit: u16,
+    /// 失敗した後の次の試行までの待機時間
     connect_retry_interval: Duration,
 }
 
@@ -121,68 +124,74 @@ impl SessionBuilder {
         }
     }
 
+    /// 接続の際に試行する最大回数
     pub fn connect_attempt_limit(mut self, connect_attempt_limit: u16) -> Self {
         self.connect_attempt_limit = connect_attempt_limit;
         self
     }
 
+    /// 失敗した後の次の試行までの待機時間
     pub fn connect_retry_interval(mut self, connect_retry_interval: Duration) -> Self {
         self.connect_retry_interval = connect_retry_interval;
         self
     }
+
+    // pub fn build() -> Session
 }
 
-/// Ardeckとの通信を制御したり、データを処理したりする
 pub struct Session {
-    /// 接続中のデバイス情報
-    device_info: DeviceInfo,
-    /// シリアルポートの接続
-    serialport: Option<Box<dyn SerialPort>>,
+    // 接続中のデバイス情報
+    // device_info: DeviceInfo,
     /// 接続状況
     state: SessionState,
     /// ハンドラー
     handler: Option<ArdeckConnectionHandler>,
     /// 接続試行時の試行回数の最大値 0の時は制限を設けない
     connect_attempt_limit: u16,
+    /// 失敗した後の次の試行までの待機時間
+    connect_retry_interval: Duration,
+}
+
+impl Session {
+    fn new(builder: SessionBuilder) {}
+}
+
+/// Ardeckとの通信を制御したり、データを処理したりする
+pub struct Daemon {
+    /// 接続中のデバイス情報
+    device_info: DeviceInfo,
+    /// シリアルポートの接続
+    serialport: Option<Box<dyn SerialPort>>,
+    /// 接続試行時の試行回数の最大値 0の時は制限を設けない
+    connect_attempt_limit: u16,
+    /// 失敗した後の次の試行までの待機時間
     connect_retry_interval: Duration,
     // recv_seqence:
 }
 
-impl Session {
+impl Daemon {
     fn new(device_info: DeviceInfo) -> Self {
         Self {
             device_info,
             serialport: None,
-            state: SessionState::Disconnected,
-            handler: None,
             connect_attempt_limit: 0,
             connect_retry_interval: Duration::ZERO,
         }
     }
 
-    /// 接続時の試行回数の最大値を設定する。0なら制限しない
-    pub fn set_connect_attempt_limit(mut self, connect_attempt_limit: u16) -> Self {
-        self.connect_attempt_limit = connect_attempt_limit;
-        self
+    pub fn start(&mut self) {
+        loop {
+            self.serialport = match self.connect() {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    continue; // TODO
+                }
+            }
+        }
     }
 
-    /// 接続時の試行回数の最大値
-    pub fn connect_attempt_limit(&self) -> u16 {
-        self.connect_attempt_limit
-    }
-
-    /// 接続時の再試行までの待機時間を設定する
-    pub fn set_connect_retry_interval(mut self, connect_retry_interval: Duration) -> Self {
-        self.connect_retry_interval = connect_retry_interval;
-        self
-    }
-
-    /// 接続時の再試行までの待機時間
-    pub fn connect_retry_interval(&self) -> Duration {
-        self.connect_retry_interval
-    }
-
-    pub fn connect(&self) -> Result<Box<dyn SerialPort>> {
+    /// 接続するまで再試行します。設定回数を超えると[`TimeOut`]エラーになります。
+    fn connect(&self) -> Result<Box<dyn SerialPort>> {
         let mut tryed: u16 = 0;
         loop {
             if let Some(port) = self.try_connect() {
@@ -191,7 +200,7 @@ impl Session {
 
             if self.connect_attempt_limit != 0 {
                 tryed += 1;
-                if tryed <= self.connect_attempt_limit() {
+                if tryed <= self.connect_attempt_limit {
                     return Err(Error::Session(SessionErrorKind::TimeOut));
                 }
             }
@@ -211,6 +220,16 @@ impl Session {
     }
 }
 
+// struct SessionBridge {}
+
+/// SessionがDaemonに送信するメッセージ
+enum SessionMessage {
+    Connect(DeviceInfo),
+}
+
+enum DaemonMessage {
+    Connected,
+}
 // DRAFT:
 // - コネクションインスタンスが生成されると接続先を記録したインスタンスが生成される
 // - インスタンスが存在する間はシリアルポートが切断されても再接続を試みる
