@@ -1,9 +1,16 @@
 pub mod dec;
 pub mod switch;
 
-use std::{fmt, thread::sleep, time::Duration};
+use std::{default, fmt, sync::Arc, thread::sleep, time::Duration};
 
 use serialport::{SerialPort, SerialPortType, UsbPortInfo};
+use tokio::{
+    sync::{
+        Mutex,
+        mpsc::{self, Sender},
+    },
+    task::JoinHandle,
+};
 
 /// デバイスのハードウェア固有番号を使用して、識別番号を作成する
 fn make_device_id(port_info: &UsbPortInfo) -> String {
@@ -18,6 +25,7 @@ fn make_device_id(port_info: &UsbPortInfo) -> String {
 }
 
 /// コンピューターに接続されて利用可能なシリアルポートデバイスの情報
+#[derive(Debug, Clone)]
 pub struct DeviceInfo {
     /// ポート名
     pub port_name: String,
@@ -28,6 +36,7 @@ pub struct DeviceInfo {
 }
 
 /// 接続可能なUSB Port一覧を取得する
+///
 /// # Example
 /// ```
 /// let device = ardeck::device::available_list();
@@ -91,13 +100,14 @@ enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 enum SessionState {
     /// 初回接続中、または再接続中
     Connecting,
     /// 接続済み
     Connected,
     /// 切断済み
+    #[default]
     Disconnected,
     /// 通信中にエラーが発生
     Error(Error),
@@ -141,95 +151,71 @@ impl SessionBuilder {
 
 pub struct Session {
     // 接続中のデバイス情報
-    // device_info: DeviceInfo,
+    device_info: DeviceInfo,
     /// 接続状況
     state: SessionState,
     /// ハンドラー
-    handler: Option<ArdeckConnectionHandler>,
+    handler: Arc<Mutex<Option<ArdeckConnectionHandler>>>,
     /// 接続試行時の試行回数の最大値 0の時は制限を設けない
     connect_attempt_limit: u16,
     /// 失敗した後の次の試行までの待機時間
     connect_retry_interval: Duration,
+    /// デーモン
+    daemon: Option<JoinHandle<()>>,
 }
 
 impl Session {
-    fn new(builder: SessionBuilder) {}
-}
-
-/// Ardeckとの通信を制御したり、データを処理したりする
-pub struct Daemon {
-    /// 接続中のデバイス情報
-    device_info: DeviceInfo,
-    /// シリアルポートの接続
-    serialport: Option<Box<dyn SerialPort>>,
-    /// 接続試行時の試行回数の最大値 0の時は制限を設けない
-    connect_attempt_limit: u16,
-    /// 失敗した後の次の試行までの待機時間
-    connect_retry_interval: Duration,
-    // recv_seqence:
-}
-
-impl Daemon {
-    fn new(device_info: DeviceInfo) -> Self {
+    pub fn new(builder: SessionBuilder) -> Self {
         Self {
-            device_info,
-            serialport: None,
-            connect_attempt_limit: 0,
-            connect_retry_interval: Duration::ZERO,
+            device_info: builder.device_info,
+            state: SessionState::default(),
+            handler: Arc::new(Mutex::new(None)),
+            connect_attempt_limit: builder.connect_attempt_limit,
+            connect_retry_interval: builder.connect_retry_interval,
+            daemon: None,
         }
     }
 
     pub fn start(&mut self) {
-        loop {
-            self.serialport = match self.connect() {
-                Ok(p) => Some(p),
-                Err(e) => {
-                    continue; // TODO
+        // TODO: この中でスレッドループを作ってJoinHandleを保存する
+        // 必要なものをクローンする
+        let device_info = self.device_info.clone();
+        let handler = self.handler.clone();
+        let connect_attempt_limit = self.connect_attempt_limit;
+        let connect_retry_interval = self.connect_retry_interval.clone();
+        self.daemon = Some(tokio::spawn(async move {
+            'threadloop: loop {
+                // TODO: もし接続が切れたらthreadloopをcontinueする
+                let mut port = match serialport::new(&device_info.port_name, 9600).open() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::error!("{}", e.to_string());
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                        continue 'threadloop;
+                    }
+                };
+
+                // readloop
+                loop {
+                    let mut buf: [u8; 1] = [0];
+
+                    match port.read(&mut buf) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            continue 'threadloop;
+                        }
+                    };
                 }
             }
-        }
-    }
-
-    /// 接続するまで再試行します。設定回数を超えると[`TimeOut`]エラーになります。
-    fn connect(&self) -> Result<Box<dyn SerialPort>> {
-        let mut tryed: u16 = 0;
-        loop {
-            if let Some(port) = self.try_connect() {
-                return Ok(port);
-            }
-
-            if self.connect_attempt_limit != 0 {
-                tryed += 1;
-                if tryed <= self.connect_attempt_limit {
-                    return Err(Error::Session(SessionErrorKind::TimeOut));
-                }
-            }
-
-            sleep(self.connect_retry_interval);
-        }
-    }
-
-    /// 接続試行
-    ///
-    /// 接続を試行します。成功すれば[`SerialPort`]を返し、失敗すれば[`Noneを返します`]
-    fn try_connect(&self) -> Option<Box<dyn SerialPort>> {
-        match serialport::new(&self.device_info.port_name, 9600).open() {
-            Ok(p) => Some(p),
-            Err(_e) => None,
-        }
+        }));
     }
 }
-
-// struct SessionBridge {}
 
 /// SessionがDaemonに送信するメッセージ
 enum SessionMessage {
     Connect(DeviceInfo),
 }
 
-enum DaemonMessage {
-    Connected,
-}
 // DRAFT:
 // - コネクションインスタンスが生成されると接続先を記録したインスタンスが生成される
 // - インスタンスが存在する間はシリアルポートが切断されても再接続を試みる
