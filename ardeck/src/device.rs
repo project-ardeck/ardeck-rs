@@ -1,4 +1,4 @@
-pub mod dec;
+pub mod decode;
 pub mod switch;
 
 use std::{default, fmt, sync::Arc, thread::sleep, time::Duration};
@@ -197,10 +197,13 @@ impl Session {
 
                 // readloop
                 loop {
-                    let mut buf: [u8; 1] = [0];
+                    let mut buf: [u8; 16] = [0; 16];
 
                     match port.read(&mut buf) {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            // 呼び出し
+                            // 
+                        }
                         Err(e) => {
                             continue 'threadloop;
                         }
