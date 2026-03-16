@@ -131,6 +131,11 @@ impl Decoder {
 
         Some(buf)
     }
+
+    #[cfg(test)]
+    pub fn get_buf(&mut self) -> Vec<u8> {
+        self.buf.clone()
+    }
 }
 
 #[cfg(test)]
@@ -170,15 +175,27 @@ mod tests {
         decoder.receive(vec![01, 01, 00]);
         decoder.receive(vec![01, 01, 01, 00]);
         decoder.receive(vec![01, 02, 11, 01, 00]);
-
-        // FIXME: error
-        // decoder.receive(vec![01, 01, 00, 01]);
-        // decoder.receive(vec![01, 01, 01, 02]);
-        // decoder.receive(vec![11, 01, 00]);
+        println!("before A: {:?}", decoder.get_buf());
 
         decoder.process_buffer().unwrap();
         decoder.process_buffer().unwrap();
         decoder.process_buffer().unwrap();
         // decoder.process_buffer().unwrap();
+
+        println!("after A: {:?}", decoder.get_buf());
+
+        decoder.receive(vec![01, 01, 00, 01]);
+        decoder.receive(vec![01, 01, 00, 01]);
+        decoder.receive(vec![02, 11, 01, 00]);
+
+        println!("before B: {:?}", decoder.get_buf());
+
+        decoder.process_buffer().unwrap();
+        decoder.process_buffer().unwrap();
+        decoder.process_buffer().unwrap();
+
+        println!("after B: {:?}", decoder.get_buf());
+
+        assert_eq!(decoder.process_buffer(), None);
     }
 }
