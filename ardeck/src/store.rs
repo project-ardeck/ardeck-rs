@@ -1,9 +1,4 @@
-use std::{
-    fs::create_dir_all,
-    io::{Read, Write},
-    path::PathBuf,
-    sync::OnceLock,
-};
+use std::{fs::create_dir_all, io::Write, path::PathBuf, sync::OnceLock};
 
 use serde::{Serialize, de::DeserializeOwned};
 

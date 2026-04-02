@@ -25,7 +25,7 @@ fn make_device_id(port_info: &UsbPortInfo) -> String {
 }
 
 /// コンピューターに接続されて利用可能なシリアルポートデバイスの情報
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DeviceInfo {
     /// ポート名
     pub port_name: String,
@@ -116,6 +116,7 @@ enum SessionState {
 pub type ArdeckConnectionHandler = Box<dyn Fn(SessionState) + Send + Sync + 'static>;
 
 /// セッションを作成する前に設定をおこないます。
+#[derive(Debug, Clone)]
 pub struct SessionBuilder {
     /// デバイス情報
     device_info: DeviceInfo,
@@ -202,7 +203,7 @@ impl Session {
                     match port.read(&mut buf) {
                         Ok(_) => {
                             // 呼び出し
-                            // 
+                            //
                         }
                         Err(e) => {
                             continue 'threadloop;
