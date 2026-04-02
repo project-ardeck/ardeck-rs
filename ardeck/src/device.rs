@@ -56,8 +56,9 @@ pub fn available_list() -> Vec<DeviceInfo> {
         .collect()
 }
 
+// TODO: 名前変える
 /// デバイス一覧の実装
-pub trait DeviceInfoList {
+trait DeviceInfoList {
     fn arduino_only(self) -> Vec<DeviceInfo>;
 }
 
@@ -147,7 +148,9 @@ impl SessionBuilder {
         self
     }
 
-    // pub fn build() -> Session
+    pub fn build(self) -> Session {
+        Session::new(self)
+    }
 }
 
 pub struct Session {
