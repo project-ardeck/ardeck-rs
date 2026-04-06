@@ -228,6 +228,10 @@ impl Session {
         })
         .detach();
     }
+
+    pub fn device_info(&self) -> &DeviceInfo {
+        &self.device_info
+    }
 }
 
 impl Drop for Session {
