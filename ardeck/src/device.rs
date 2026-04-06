@@ -1,16 +1,15 @@
 pub mod decode;
 pub mod switch;
 
-use std::{default, fmt, sync::Arc, thread::sleep, time::Duration};
+use std::{
+    default, fmt,
+    sync::{Arc, mpsc},
+    thread::sleep,
+    time::Duration,
+};
 
 use serialport::{SerialPort, SerialPortType, UsbPortInfo};
-use tokio::{
-    sync::{
-        Mutex,
-        mpsc::{self, Sender},
-    },
-    task::JoinHandle,
-};
+use smol::lock::Mutex;
 
 /// デバイスのハードウェア固有番号を使用して、識別番号を作成する
 fn make_device_id(port_info: &UsbPortInfo) -> String {
@@ -154,6 +153,7 @@ impl SessionBuilder {
 }
 
 pub struct Session {
+    cmd_tx: Option<mpsc::Sender<SessionMessage>>,
     // 接続中のデバイス情報
     device_info: DeviceInfo,
     /// 接続状況
@@ -164,43 +164,54 @@ pub struct Session {
     connect_attempt_limit: u16,
     /// 失敗した後の次の試行までの待機時間
     connect_retry_interval: Duration,
-    /// デーモン
-    daemon: Option<JoinHandle<()>>,
 }
 
 impl Session {
     pub fn new(builder: SessionBuilder) -> Self {
         Self {
+            cmd_tx: None,
             device_info: builder.device_info,
             state: SessionState::default(),
             handler: Arc::new(Mutex::new(None)),
             connect_attempt_limit: builder.connect_attempt_limit,
             connect_retry_interval: builder.connect_retry_interval,
-            daemon: None,
         }
     }
 
     pub fn start(&mut self) {
-        // TODO: この中でスレッドループを作ってJoinHandleを保存する
         // 必要なものをクローンする
         let device_info = self.device_info.clone();
         let handler = self.handler.clone();
         let connect_attempt_limit = self.connect_attempt_limit;
         let connect_retry_interval = self.connect_retry_interval.clone();
-        self.daemon = Some(tokio::spawn(async move {
+        let (msg_tx, msg_rx) = mpsc::channel::<SessionMessage>();
+        self.cmd_tx = Some(msg_tx);
+        smol::spawn(async move {
             'threadloop: loop {
+                if let Ok(e) = msg_rx.try_recv() {
+                    match e {
+                        SessionMessage::Drop => break,
+                    }
+                }
+
                 // TODO: もし接続が切れたらthreadloopをcontinueする
                 let mut port = match serialport::new(&device_info.port_name, 9600).open() {
                     Ok(p) => p,
                     Err(e) => {
                         log::error!("{}", e.to_string());
-                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                        smol::Timer::after(Duration::from_millis(1000)).await;
                         continue 'threadloop;
                     }
                 };
 
                 // readloop
                 loop {
+                    if let Ok(e) = msg_rx.try_recv() {
+                        match e {
+                            SessionMessage::Drop => break 'threadloop,
+                        }
+                    }
+
                     let mut buf: [u8; 16] = [0; 16];
 
                     match port.read(&mut buf) {
@@ -214,13 +225,22 @@ impl Session {
                     };
                 }
             }
-        }));
+        })
+        .detach();
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(cmd_tx) = &self.cmd_tx {
+            cmd_tx.send(SessionMessage::Drop).unwrap();
+        }
     }
 }
 
 /// SessionがDaemonに送信するメッセージ
 enum SessionMessage {
-    Connect(DeviceInfo),
+    Drop,
 }
 
 // DRAFT:

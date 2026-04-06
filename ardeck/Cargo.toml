@@ -14,7 +14,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 serialport = "4.8.1"
-tokio = { workspace = true }
+smol = { workspace = true }
 
 [features]
 all = ["device", "config", "store"]
