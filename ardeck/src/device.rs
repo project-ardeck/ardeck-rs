@@ -168,6 +168,8 @@ pub struct Session {
 
 impl Session {
     pub fn new(builder: SessionBuilder) -> Self {
+        log::info!("Session created: {}", builder.device_info.port_name);
+
         Self {
             cmd_tx: None,
             device_info: builder.device_info,
@@ -187,8 +189,10 @@ impl Session {
         let (msg_tx, msg_rx) = mpsc::channel::<SessionMessage>();
         self.cmd_tx = Some(msg_tx);
         smol::spawn(async move {
+            log::info!("daemon~!");
             'threadloop: loop {
                 if let Ok(e) = msg_rx.try_recv() {
+                    // TODO: 受け取り部分を1か所にまとめる
                     match e {
                         SessionMessage::Drop => break,
                     }
@@ -237,6 +241,7 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         if let Some(cmd_tx) = &self.cmd_tx {
+            log::debug!("Dropped: {}", self.device_info.port_name);
             cmd_tx.send(SessionMessage::Drop).unwrap();
         }
     }
