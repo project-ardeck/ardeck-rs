@@ -115,6 +115,8 @@ impl Decoder {
             .as_slice()
             .to_vec();
 
+        log::trace!("Found one set: {:?}", buf);
+
         // 切り取ったデータをでコードする
         let mut i = 0;
         loop {
@@ -128,6 +130,8 @@ impl Decoder {
                 i += i_val as usize;
             }
         }
+
+        log::trace!("Decoded: {:?}", buf);
 
         Some(buf)
     }
@@ -177,9 +181,9 @@ mod tests {
         decoder.receive(&[01, 02, 11, 01, 00]);
         println!("before A: {:?}", decoder.get_buf());
 
-        decoder.process_buffer().unwrap();
-        decoder.process_buffer().unwrap();
-        decoder.process_buffer().unwrap();
+        println!("{:?}", decoder.process_buffer().unwrap());
+        println!("{:?}", decoder.process_buffer().unwrap());
+        println!("{:?}", decoder.process_buffer().unwrap());
         // decoder.process_buffer().unwrap();
 
         println!("after A: {:?}", decoder.get_buf());
@@ -190,9 +194,9 @@ mod tests {
 
         println!("before B: {:?}", decoder.get_buf());
 
-        decoder.process_buffer().unwrap();
-        decoder.process_buffer().unwrap();
-        decoder.process_buffer().unwrap();
+        println!("{:?}", decoder.process_buffer().unwrap());
+        println!("{:?}", decoder.process_buffer().unwrap());
+        println!("{:?}", decoder.process_buffer().unwrap());
 
         println!("after B: {:?}", decoder.get_buf());
 
