@@ -11,6 +11,8 @@ use std::{
 use serialport::{SerialPort, SerialPortType, UsbPortInfo};
 use smol::lock::Mutex;
 
+use crate::device::decode::Decoder;
+
 /// デバイスのハードウェア固有番号を使用して、識別番号を作成する
 fn make_device_id(port_info: &UsbPortInfo) -> String {
     if let Some(serial_number) = &port_info.serial_number {
@@ -208,6 +210,8 @@ impl Session {
                     }
                 };
 
+                let mut decoder = Decoder::new();
+
                 // readloop
                 loop {
                     if let Ok(e) = msg_rx.try_recv() {
@@ -220,6 +224,10 @@ impl Session {
 
                     match port.read(&mut buf) {
                         Ok(_) => {
+                            decoder.receive(&buf);
+                            if let Some(data) = decoder.process_buffer() {
+                                log::debug!("Received data!!! {:?}", data);
+                            }
                             // 呼び出し
                             //
                         }
