@@ -99,7 +99,7 @@ impl Decoder {
     }
 
     /// COBSエンコードされたバイトデータを蓄積する
-    pub fn receive<T: AsRef<Vec<u8>>>(&mut self, data: T) {
+    pub fn receive(&mut self, data: &[u8]) {
         self.buf.append(&mut data.as_ref().to_vec());
     }
 
@@ -172,9 +172,9 @@ mod tests {
 
         let mut decoder = Decoder::new();
 
-        decoder.receive(vec![01, 01, 00]);
-        decoder.receive(vec![01, 01, 01, 00]);
-        decoder.receive(vec![01, 02, 11, 01, 00]);
+        decoder.receive(&[01, 01, 00]);
+        decoder.receive(&[01, 01, 01, 00]);
+        decoder.receive(&[01, 02, 11, 01, 00]);
         println!("before A: {:?}", decoder.get_buf());
 
         decoder.process_buffer().unwrap();
@@ -184,9 +184,9 @@ mod tests {
 
         println!("after A: {:?}", decoder.get_buf());
 
-        decoder.receive(vec![01, 01, 00, 01]);
-        decoder.receive(vec![01, 01, 00, 01]);
-        decoder.receive(vec![02, 11, 01, 00]);
+        decoder.receive(&[01, 01, 00, 01]);
+        decoder.receive(&[01, 01, 00, 01]);
+        decoder.receive(&[02, 11, 01, 00]);
 
         println!("before B: {:?}", decoder.get_buf());
 
