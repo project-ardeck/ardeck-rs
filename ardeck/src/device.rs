@@ -224,6 +224,7 @@ impl Session {
 
                     match port.read(&mut buf) {
                         Ok(_) => {
+                            log::debug!("received: {:?}", buf);
                             decoder.receive(&buf);
                             if let Some(data) = decoder.process_buffer() {
                                 log::debug!("Received data!!! {:?}", data);
