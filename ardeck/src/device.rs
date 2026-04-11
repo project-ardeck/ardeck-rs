@@ -220,7 +220,7 @@ impl Session {
                         }
                     }
 
-                    let mut buf: [u8; 16] = [0; 16];
+                    let mut buf: [u8; 1] = [0; 1];
 
                     match port.read(&mut buf) {
                         Ok(len) => {
