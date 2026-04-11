@@ -227,7 +227,7 @@ impl Session {
                             log::debug!("received: {:?} ({} bytes)", &buf[0..len], len);
                             decoder.receive(&buf[0..len]);
                             if let Some(data) = decoder.process_buffer() {
-                                log::debug!("Received data!!! {:?}", data);
+                                log::debug!("decoded data!!! {:?}", data);
                             }
                             // 呼び出し
                             //
