@@ -133,7 +133,7 @@ impl Decoder {
 
         log::trace!("Decoded: {:?}", buf);
 
-        Some(buf)
+        Some(buf[1..buf.len() - 1].to_vec())
     }
 
     #[cfg(test)]
