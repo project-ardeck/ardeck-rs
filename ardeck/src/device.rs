@@ -4,7 +4,7 @@ pub mod switch;
 use std::{
     default, fmt,
     sync::{Arc, mpsc},
-    thread::sleep,
+    thread::{self, sleep},
     time::Duration,
 };
 
@@ -220,17 +220,23 @@ impl Session {
                         }
                     }
 
-                    let mut buf: [u8; 1] = [0; 1];
+                    let mut buf: [u8; 16] = [0; 16];
 
                     match port.read(&mut buf) {
                         Ok(len) => {
                             log::debug!("received: {:?} ({} bytes)", &buf[0..len], len);
                             decoder.receive(&buf[0..len]);
-                            if let Some(data) = decoder.process_buffer() {
+
+                            // NOTE: 連続でデコードできるように修正
+                            while let Some(data) = decoder.process_buffer() {
                                 log::debug!("decoded data!!! {:?}", data);
                             }
                             // 呼び出し
                             //
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                            // NOTE: 単純のタイムアウトの時は切断しないように修正
+                            continue;
                         }
                         Err(e) => {
                             continue 'threadloop;
