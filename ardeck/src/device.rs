@@ -81,7 +81,7 @@ impl DeviceInfoList for Vec<DeviceInfo> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum SessionErrorKind {
     InitializationError,
     TimeOut,
@@ -96,7 +96,7 @@ impl fmt::Display for SessionErrorKind {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 enum Error {
     #[error("Session error: `{0}`")]
     Session(SessionErrorKind),
@@ -106,7 +106,7 @@ enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub enum SessionEvent {
     /// 初回接続中、または再接続中
     Connecting,
