@@ -112,7 +112,8 @@ impl Decoder {
         let mut buf = self
             .buf
             .drain(0..=self.buf.iter().position(|x| *x == 0)?)
-            .as_slice();
+            .as_slice()
+            .to_vec();
 
         log::trace!("Found one set: {:?}", buf);
 
@@ -137,8 +138,8 @@ impl Decoder {
         // チェックサム
         let sum = buf.last()?; // 受け取った計算済み合計値
         let payload = &buf[0..buf.len() - 1]; // 受け取ったデータのペイロード
-        let mut now_sum: u8 = 0; // 今から計算する合計値
-        for byte in payload {
+        let now_sum: u8 = 0; // 今から計算する合計値
+        for byte in payload.iter() {
             now_sum.wrapping_add(*byte);
         }
 
