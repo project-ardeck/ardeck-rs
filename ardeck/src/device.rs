@@ -190,7 +190,7 @@ impl Session {
             cmd_tx: None,
             device_info: builder.device_info,
             state: SessionEvent::default(),
-            handler: Arc::new(Mutex::new(Vec::new())),
+            handler: Arc::new(Mutex::new(builder.handler)),
             connect_attempt_limit: builder.connect_attempt_limit,
             connect_retry_interval: builder.connect_retry_interval,
         }
@@ -262,8 +262,11 @@ impl Session {
                                     continue;
                                 };
 
+                                log::debug!("{:?}", data);
+
                                 // ハンドラー発火
                                 for handler in handler.lock().await.iter() {
+                                    log::debug!("hhhhhh");
                                     handler(SessionEvent::Data(data.clone()));
                                 }
                             }
