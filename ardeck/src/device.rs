@@ -10,8 +10,12 @@ use std::{
 
 use serialport::{SerialPort, SerialPortType, UsbPortInfo};
 use smol::lock::Mutex;
+use syn::token::Pub;
 
-use crate::device::decode::Decoder;
+use crate::device::{
+    decode::{Decoder, raw_to_switch_info},
+    switch::SwitchInfo,
+};
 
 /// デバイスのハードウェア固有番号を使用して、識別番号を作成する
 fn make_device_id(port_info: &UsbPortInfo) -> String {
@@ -103,11 +107,13 @@ enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Default)]
-enum SessionState {
+pub enum SessionEvent {
     /// 初回接続中、または再接続中
     Connecting,
     /// 接続済み
     Connected,
+    /// データ受信した
+    Data(SwitchInfo),
     /// 切断済み
     #[default]
     Disconnected,
@@ -115,10 +121,9 @@ enum SessionState {
     Error(Error),
 }
 
-pub type ArdeckConnectionHandler = Box<dyn Fn(SessionState) + Send + Sync + 'static>;
+type ArdeckConnectionHandler = Box<dyn Fn(SessionEvent) + Send + Sync + 'static>;
 
 /// セッションを作成する前に設定をおこないます。
-#[derive(Debug, Clone)]
 pub struct SessionBuilder {
     /// デバイス情報
     device_info: DeviceInfo,
@@ -126,6 +131,8 @@ pub struct SessionBuilder {
     connect_attempt_limit: u16,
     /// 失敗した後の次の試行までの待機時間
     connect_retry_interval: Duration,
+
+    handler: Vec<ArdeckConnectionHandler>,
 }
 
 impl SessionBuilder {
@@ -134,6 +141,7 @@ impl SessionBuilder {
             device_info,
             connect_attempt_limit: 0,
             connect_retry_interval: Duration::ZERO,
+            handler: Vec::new(),
         }
     }
 
@@ -149,6 +157,12 @@ impl SessionBuilder {
         self
     }
 
+    /// データを受信したときに実行するハンドラー
+    pub fn handler(mut self, handler: ArdeckConnectionHandler) -> Self {
+        self.handler.push(handler);
+        self
+    }
+
     pub fn build(self) -> Session {
         Session::new(self)
     }
@@ -159,9 +173,9 @@ pub struct Session {
     // 接続中のデバイス情報
     device_info: DeviceInfo,
     /// 接続状況
-    state: SessionState,
+    state: SessionEvent,
     /// ハンドラー
-    handler: Arc<Mutex<Option<ArdeckConnectionHandler>>>,
+    handler: Arc<Mutex<Vec<ArdeckConnectionHandler>>>,
     /// 接続試行時の試行回数の最大値 0の時は制限を設けない
     connect_attempt_limit: u16,
     /// 失敗した後の次の試行までの待機時間
@@ -175,11 +189,15 @@ impl Session {
         Self {
             cmd_tx: None,
             device_info: builder.device_info,
-            state: SessionState::default(),
-            handler: Arc::new(Mutex::new(None)),
+            state: SessionEvent::default(),
+            handler: Arc::new(Mutex::new(Vec::new())),
             connect_attempt_limit: builder.connect_attempt_limit,
             connect_retry_interval: builder.connect_retry_interval,
         }
+    }
+
+    pub async fn add_handler(&mut self, handler: ArdeckConnectionHandler) {
+        self.handler.lock().await.push(handler);
     }
 
     pub fn start(&mut self) {
@@ -195,6 +213,7 @@ impl Session {
             'threadloop: loop {
                 if let Ok(e) = msg_rx.try_recv() {
                     // TODO: 受け取り部分を1か所にまとめる
+                    // TODO: handler
                     match e {
                         SessionMessage::Drop => break,
                     }
@@ -206,9 +225,15 @@ impl Session {
                     Err(e) => {
                         log::error!("{}", e.to_string());
                         smol::Timer::after(Duration::from_millis(1000)).await;
+                        // TODO: handler
                         continue 'threadloop;
                     }
                 };
+
+                // ハンドラー発火
+                for handler in handler.lock().await.iter() {
+                    handler(SessionEvent::Connected);
+                }
 
                 let mut decoder = Decoder::new();
 
@@ -216,6 +241,7 @@ impl Session {
                 loop {
                     if let Ok(e) = msg_rx.try_recv() {
                         match e {
+                            // TODO: handler
                             SessionMessage::Drop => break 'threadloop,
                         }
                     }
@@ -230,15 +256,25 @@ impl Session {
                             // NOTE: 連続でデコードできるように修正
                             while let Some(data) = decoder.process_buffer() {
                                 log::debug!("decoded data!!! {:?}", data);
+                                let Some(data) = raw_to_switch_info(&data) else {
+                                    // パース失敗
+                                    log::error!("Failed parse to switch info: {:?}", data);
+                                    continue;
+                                };
+
+                                // ハンドラー発火
+                                for handler in handler.lock().await.iter() {
+                                    handler(SessionEvent::Data(data.clone()));
+                                }
                             }
-                            // 呼び出し
-                            //
                         }
                         Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                            // TODO: handler
                             // NOTE: 単純のタイムアウトの時は切断しないように修正
                             continue;
                         }
                         Err(e) => {
+                            // TODO: handler
                             continue 'threadloop;
                         }
                     };
