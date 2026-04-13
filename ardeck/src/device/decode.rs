@@ -138,14 +138,15 @@ impl Decoder {
         // チェックサム
         let sum = buf.last()?; // 受け取った計算済み合計値
         let payload = &buf[0..buf.len() - 1]; // 受け取ったデータのペイロード
-        let now_sum: u8 = 0; // 今から計算する合計値
+        let mut now_sum: u8 = 0; // 今から計算する合計値
         for byte in payload.iter() {
-            now_sum.wrapping_add(*byte);
+            now_sum = now_sum.wrapping_add(*byte);
         }
 
         if *sum == now_sum {
             Some(payload.to_vec())
         } else {
+            log::debug!("SUM error: {} != {}", sum, now_sum);
             None
         }
     }
