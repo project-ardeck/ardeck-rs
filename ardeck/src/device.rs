@@ -248,6 +248,8 @@ impl Session {
 
                     let mut buf: [u8; 16] = [0; 16];
 
+                    port.write(&[0xFF]).unwrap();
+
                     match port.read(&mut buf) {
                         Ok(len) => {
                             log::debug!("received: {:?} ({} bytes)", &buf[0..len], len);
