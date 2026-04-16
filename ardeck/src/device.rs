@@ -237,6 +237,8 @@ impl Session {
 
                 let mut decoder = Decoder::new();
 
+                port.write(&[0xFF]).unwrap();
+
                 // readloop
                 loop {
                     if let Ok(e) = msg_rx.try_recv() {
@@ -247,8 +249,6 @@ impl Session {
                     }
 
                     let mut buf: [u8; 16] = [0; 16];
-
-                    port.write(&[0xFF]).unwrap();
 
                     match port.read(&mut buf) {
                         Ok(len) => {
