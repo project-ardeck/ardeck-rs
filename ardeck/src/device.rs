@@ -237,6 +237,7 @@ impl Session {
 
                 let mut decoder = Decoder::new();
 
+                // 接続時のポート情報要求
                 port.write(&[0xFF]).unwrap();
 
                 // readloop
@@ -255,7 +256,6 @@ impl Session {
                             log::debug!("received: {:?} ({} bytes)", &buf[0..len], len);
                             decoder.receive(&buf[0..len]);
 
-                            // NOTE: 連続でデコードできるように修正
                             while let Some(data) = decoder.process_buffer() {
                                 log::debug!("decoded data!!! {:?}", data);
                                 let Some(data) = raw_to_switch_info(&data) else {

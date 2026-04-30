@@ -56,7 +56,7 @@ pub fn raw_to_switch_info(bytes: impl AsRef<[u8]>) -> Option<SwitchInfo> {
     let timestamp_micros = 0;
 
     // switch kind
-    match bytes.get(0)? & 0x8 {
+    match bytes.get(0)? & 0x80 {
         // Digital Switch
         0 => {
             if bytes.len() == 1 {
