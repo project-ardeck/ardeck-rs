@@ -18,6 +18,7 @@ pub enum Error {
     Serde(#[from] serde_json::Error),
 }
 
+/// 設定ファイルの保存先等の初期化
 #[derive(Debug, Default)]
 pub struct StoreBuilder {
     /// 設定ファイルの保存先ディレクトリ
@@ -25,12 +26,16 @@ pub struct StoreBuilder {
 }
 
 impl StoreBuilder {
+    /// 保存先を指定します
     pub fn path(mut self, path: PathBuf) -> Self {
         assert!(path.is_dir(), "{} is not directory.", path.display());
         self.path = path;
         self
     }
 
+    /// 初期化します
+    ///
+    /// 2回以上の呼び出しでpanicになります
     pub fn init(self) {
         create_dir_all(&self.path).expect("Failed create directry when store initialize.");
         STORE_PATH.set(self.path).unwrap();
@@ -48,9 +53,9 @@ pub trait StoreTrait: Serialize + DeserializeOwned + ConfigFile + Clone + Send +
     /// # Example
     ///
     /// ```
-    /// let mut my_config = MyConfig::load().unwrap_or_default();
+    /// let mut my_config = MyConfig::load().unwrap_or_default(); // 読み込み
     /// my_config.age += 1;
-    /// my_config.save().unwrap();
+    /// my_config.save().unwrap(); // 保存
     /// ```
     fn load() -> Result<Self, Error> {
         let file = std::fs::File::open(Self::path())?;
@@ -67,9 +72,9 @@ pub trait StoreTrait: Serialize + DeserializeOwned + ConfigFile + Clone + Send +
     /// # Example
     ///
     /// ```
-    /// let mut my_config = MyConfig::load().unwrap_or_default();
+    /// let mut my_config = MyConfig::load().unwrap_or_default(); // 読み込み
     /// my_config.age += 1;
-    /// my_config.save().unwrap();
+    /// my_config.save().unwrap(); // 保存
     /// ```
     fn save(self) -> Result<Self, Error> {
         let file = std::fs::File::create(Self::path())?;

@@ -13,11 +13,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
-serialport = "4.8.1"
+serialport = "4.8.2"
 smol = { workspace = true }
 
 [features]
-all = ["device", "config", "store"]
+all = ["device", "config", "store", "profile"]
 device = []
 config = []
 store = []
+profile = []
