@@ -36,14 +36,54 @@ pub struct SwitchInfo {
     timestamp: Timestamp,
 }
 
+impl SwitchInfo {
+    pub fn kind(&self) -> SwitchKind {
+        self.kind
+    }
+
+    pub fn pin(&self) -> u8 {
+        self.pin
+    }
+
+    pub fn state(&self) -> u16 {
+        self.state
+    }
+
+    pub fn timestamp(&self) -> Timestamp {
+        self.timestamp
+    }
+}
+
 /// USBポートの情報
 #[derive(Debug, Clone, PartialEq)]
 pub struct PortInfo {
-    pub vid: u16,
-    pub pid: u16,
-    pub serial_number: Option<String>,
-    pub manufacturer: Option<String>,
-    pub product: Option<String>,
+    vid: u16,
+    pid: u16,
+    serial_number: Option<String>,
+    manufacturer: Option<String>,
+    product: Option<String>,
+}
+
+impl PortInfo {
+    pub fn vid(&self) -> u16 {
+        self.vid
+    }
+
+    pub fn pid(&self) -> u16 {
+        self.pid
+    }
+
+    pub fn serial_number(&self) -> Option<&String> {
+        self.serial_number.as_ref()
+    }
+
+    pub fn manufacturer(&self) -> Option<&String> {
+        self.manufacturer.as_ref()
+    }
+
+    pub fn product(&self) -> Option<&String> {
+        self.product.as_ref()
+    }
 }
 
 impl From<serialport::UsbPortInfo> for PortInfo {
@@ -67,6 +107,20 @@ pub struct DeviceInfo {
     port_info: PortInfo,
     /// ポート情報から生成されたデバイスID
     device_id: String,
+}
+
+impl DeviceInfo {
+    pub fn port_name(&self) -> &str {
+        &self.port_name
+    }
+
+    pub fn port_info(&self) -> &PortInfo {
+        &self.port_info
+    }
+
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
 }
 
 /// デバイス一覧の実装
@@ -111,6 +165,24 @@ pub struct ProfileItem {
     action_id: String,
 }
 
+impl ProfileItem {
+    pub fn switch_type(&self) -> SwitchKind {
+        self.switch_type
+    }
+
+    pub fn switch_id(&self) -> usize {
+        self.switch_id
+    }
+
+    pub fn plugin_id(&self) -> &str {
+        &self.plugin_id
+    }
+
+    pub fn action_id(&self) -> &str {
+        &self.action_id
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
@@ -120,6 +192,20 @@ pub struct Profile {
     profile_name: String,
     /// スイッチとアクションの紐づけ設定の配列
     maps: Vec<ProfileItem>,
+}
+
+impl Profile {
+    pub fn version(&self) -> usize {
+        self.version
+    }
+
+    pub fn profile_name(&self) -> &str {
+        &self.profile_name
+    }
+
+    pub fn maps(&self) -> &[ProfileItem] {
+        &self.maps
+    }
 }
 
 /// COBS形式のデータを生バイト値に変換する。
@@ -231,7 +317,7 @@ pub struct Communication {
 }
 
 impl Communication {
-    fn new(device_info: DeviceInfo) -> Result<Self, Error> {
+    pub fn new(device_info: DeviceInfo) -> Result<Self, Error> {
         let serialport = serialport::new(&device_info.port_name, 9600).open()?;
 
         Ok(Self {
@@ -241,7 +327,7 @@ impl Communication {
     }
 
     /// Ardeckコマンド スイッチ情報全取得 0xFF
-    fn request_switch_info_all(&mut self) -> Result<SwitchInfo, Error> {
+    pub fn request_switch_info_all(&mut self) -> Result<SwitchInfo, Error> {
         let _wrote_bytes = self.serialport.write(&[0xFF])?;
 
         let mut buf = [0u8; 16];
