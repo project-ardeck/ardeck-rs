@@ -1,5 +1,3 @@
-use std::ops::StartInclusive;
-
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serialport::{SerialPort, SerialPortType};
