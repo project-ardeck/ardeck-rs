@@ -1,3 +1,5 @@
+use std::ops::StartInclusive;
+
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serialport::{SerialPort, SerialPortType};
@@ -327,21 +329,35 @@ impl Communication {
     }
 
     /// Ardeckコマンド スイッチ情報全取得 0xFF
-    pub fn request_switch_info_all(&mut self) -> Result<SwitchInfo, Error> {
+    pub fn request_switch_info_all(&mut self) -> Result<Vec<SwitchInfo>, Error> {
         let _wrote_bytes = self.serialport.write(&[0xFF])?;
 
-        let mut buf = [0u8; 16];
-        let _read = self.serialport.read(&mut buf)?;
+        let mut info_vec = Vec::new();
 
-        let Some(bytes) = dec_cobs(&buf) else {
-            return Err(Error::ParseError);
-        };
+        let mut buf = [0u8; 256];
+        let read = self.serialport.read(&mut buf)?;
 
-        let Some(info) = raw_to_switch_info(bytes) else {
-            return Err(Error::ParseError);
-        };
+        let mut start_i = 0;
+        for i in 0..read {
+            if buf[i] == 0x00 {
+                // start..i がフレーム本体（区切りの0は含めない）
+                let frame = &buf[start_i..=i];
+                if !frame.is_empty() {
+                    if let Some(bytes) = dec_cobs(frame) {
+                        if let Some(info) = raw_to_switch_info(bytes) {
+                            info_vec.push(info);
+                        };
+                    }
+                }
+                start_i = i + 1;
+            }
+        }
 
-        Ok(info)
+        Ok(info_vec)
+    }
+
+    pub fn device_info(&self) -> &DeviceInfo {
+        &self.device_info
     }
 }
 
@@ -413,10 +429,38 @@ impl Communication {
 //     }
 // }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     #[test]
-//     fn dec() {}
-// }
+    #[test]
+    fn dec() {
+        // let mut decoder = Decoder::new();
+
+        // decoder.receive(&[01, 01, 00]);
+        // decoder.receive(&[01, 01, 01, 00]);
+        // decoder.receive(&[01, 02, 11, 01, 00]);
+        // println!("before A: {:?}", decoder.get_buf());
+
+        // println!("{:?}", decoder.process_buffer().unwrap());
+        // println!("{:?}", decoder.process_buffer().unwrap());
+        // println!("{:?}", decoder.process_buffer().unwrap());
+        // // decoder.process_buffer().unwrap();
+
+        // println!("after A: {:?}", decoder.get_buf());
+
+        // decoder.receive(&[01, 01, 00, 01]);
+        // decoder.receive(&[01, 01, 00, 01]);
+        // decoder.receive(&[02, 11, 01, 00]);
+
+        // println!("before B: {:?}", decoder.get_buf());
+
+        // println!("{:?}", decoder.process_buffer().unwrap());
+        // println!("{:?}", decoder.process_buffer().unwrap());
+        // println!("{:?}", decoder.process_buffer().unwrap());
+
+        // println!("after B: {:?}", decoder.get_buf());
+
+        // assert_eq!(decoder.process_buffer(), None);
+    }
+}
