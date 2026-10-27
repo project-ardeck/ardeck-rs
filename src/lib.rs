@@ -311,121 +311,180 @@ pub fn available_list() -> Vec<DeviceInfo> {
         .collect()
 }
 
-pub struct Communication {
-    device_info: DeviceInfo,
-    serialport: Box<dyn SerialPort>,
+pub struct CobsReceiver {
+    buffer: Vec<u8>,
 }
 
-impl Communication {
-    pub fn new(device_info: DeviceInfo) -> Result<Self, Error> {
-        let serialport = serialport::new(&device_info.port_name, 9600).open()?;
-
-        Ok(Self {
-            device_info,
-            serialport,
-        })
+impl CobsReceiver {
+    pub fn new() -> Self {
+        Self {
+            buffer: Vec::new(),
+        }
     }
 
-    /// Ardeckコマンド スイッチ情報全取得 0xFF
-    pub fn request_switch_info_all(&mut self) -> Result<Vec<SwitchInfo>, Error> {
-        let _wrote_bytes = self.serialport.write(&[0xFF])?;
+    pub fn push(&mut self, data: &[u8]) -> Vec<Vec<u8>> {
+        let mut frames = Vec::new();
 
-        let mut info_vec = Vec::new();
+        for &byte in data {
+            if byte == 0x00 {
+                if self.buffer.is_empty() {
+                    // 空フレーム
+                    continue;
+                }
 
-        let mut buf = [0u8; 256];
-        let read = self.serialport.read(&mut buf)?;
+                // https://doc.rust-lang.org/std/mem/fn.take.html
+                // 所有権ではなくて値そのものを移動してくるイメージ？移動された元の変数は空になる。
+                let encoded = std::mem::take(&mut self.buffer);
 
-        let mut start_i = 0;
-        for i in 0..read {
-            if buf[i] == 0x00 {
-                // start..i がフレーム本体（区切りの0は含めない）
-                let frame = &buf[start_i..=i];
-                if !frame.is_empty() {
-                    if let Some(bytes) = dec_cobs(frame) {
-                        if let Some(info) = raw_to_switch_info(bytes) {
-                            info_vec.push(info);
-                        };
+                match dec_cobs(&encoded) {
+                    Some(decoded) => {
+                        frames.push(decoded);
+                    }
+                    None => {
+                        // 不正なCOBSフレーム
+                        // ログ等
                     }
                 }
-                start_i = i + 1;
+            } else {
+                self.buffer.push(byte);
             }
         }
 
-        Ok(info_vec)
-    }
-
-    pub fn device_info(&self) -> &DeviceInfo {
-        &self.device_info
+        frames
     }
 }
 
-// pub struct Decoder {
-//     buf: Vec<u8>,
-// }
+#[derive(Debug, Clone, Copy, Default)]
+struct WorkerStatus {
+    worker_write: bool,
+    worker_read: bool,
+    worker_action: bool,
+}
 
-// impl Decoder {
-//     pub fn new() -> Self {
-//         Self { buf: Vec::new() }
-//     }
+#[derive(Debug, Clone, Copy)]
+enum ControlMessage {
+    /// すべてのスイッチの情報を送信するように要求する
+    RequestAllSwitchInfo,
+    /// スイッチの情報を連続的に送信するモードを開始するように要求する
+    RequestStartContinuousMode,
+    /// スイッチの情報を、スイッチの状態が変化したときに限って
+    /// 連続的に送信するモードを開始するように要求する
+    RequestStartTriggeredContinuousMode,
+    /// 連続的に送信するモード(上二つ)のいずれかのモードを停止するように要求する
+    RequestStopContinuousMode,
+}
 
-//     /// COBSエンコードされたバイトデータを蓄積する
-//     pub fn receive(&mut self, data: &[u8]) {
-//         self.buf.append(&mut data.as_ref().to_vec());
-//     }
+#[derive(Debug, Clone)]
+enum ActionMessage {
+    SwitchInfos(Vec<SwitchInfo>),
+}
 
-//     /// 蓄積されたバイトデータをCOBSエンコードする。
-//     ///
-//     /// 1度デコードが完了した時点で完成品を返却します。
-//     /// デコードに失敗したら[`None`]が返ります。
-//     pub fn process_buffer(&mut self) -> Option<Vec<u8>> {
-//         // 0までを切り取ってスライスにする。なければNoneを返す
-//         let mut buf = self
-//             .buf
-//             .drain(0..=self.buf.iter().position(|x| *x == 0)?)
-//             .as_slice()
-//             .to_vec();
+#[derive(Debug, thiserror::Error)]
+enum ConnectionError {
+    #[error("{0}")]
+    CommunicationError(#[from] serialport::Error),
+}
 
-//         log::trace!("Found one set: {:?}", buf);
+struct Connection {
+    worker_status: Arc<Mutex<WorkerStatus>>,
+    exit_flag: Arc<AtomicBool>,
+    control_tx: Sender<ControlMessage>,
+}
 
-//         // 切り取ったデータをデコードする
-//         let mut i = 0;
-//         loop {
-//             let i_val = *buf.get(i)?;
+impl Connection {
+    fn new<'a>(
+        path: impl Into<std::borrow::Cow<'a, str>>,
+        baud_rate: u32,
+    ) -> Result<Self, ConnectionError> {
+        // 全スレッド共有で処理状況のステータス保管用
+        let worker_status = Arc::new(Mutex::new(WorkerStatus::default()));
+        let exit_flag = Arc::new(AtomicBool::new(false));
 
-//             buf[i] = 0;
+        let serialport = serialport::new(path, baud_rate).open()?;
 
-//             if i_val == 0 {
-//                 break;
-//             } else {
-//                 i += i_val as usize;
-//             }
-//         }
+        // 外から送信用への橋渡し
+        let (control_tx, control_rx) = std::sync::mpsc::channel::<ControlMessage>();
+        // 受信から処理への橋渡し
+        let (action_tx, action_rx) = std::sync::mpsc::channel::<ActionMessage>();
 
-//         let buf = &buf[1..buf.len() - 1];
+        // 送信用のスレッドを作る
+        let worker_status_cloned = worker_status.clone();
+        let serialport_cloned = serialport.try_clone()?;
+        let exit_flag_cloned = exit_flag.clone();
+        thread::spawn(move || {
+            let worker_status = worker_status_cloned;
+            let mut serialport = serialport_cloned;
+            let control_rx = control_rx;
+            let exit_flag = exit_flag_cloned;
 
-//         log::trace!("Decoded: {:?}", buf);
+            while let Ok(cmd) = control_rx.recv() {
+                if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+            }
+        });
 
-//         // チェックサム
-//         let sum = buf.last()?; // 受け取った計算済み合計値
-//         let payload = &buf[0..buf.len() - 1]; // 受け取ったデータのペイロード
-//         let mut now_sum: u8 = 0; // 今から計算する合計値
-//         for byte in payload.iter() {
-//             now_sum = now_sum.wrapping_add(*byte);
-//         }
+        // 受信用のスレッドを作る
+        let worker_status_cloned = worker_status.clone();
+        let serialport_cloned = serialport.try_clone()?;
+        let exit_flag_cloned = exit_flag.clone();
+        thread::spawn(move || {
+            let worker_status = worker_status_cloned;
+            let mut serialport = serialport_cloned;
+            let action_tx = action_tx;
+            let exit_flag = exit_flag_cloned;
+            let mut cobs = CobsReceiver::new();
 
-//         if *sum == now_sum {
-//             Some(payload.to_vec())
-//         } else {
-//             log::debug!("SUM error: {} != {}", sum, now_sum);
-//             None
-//         }
-//     }
+            let mut buf = [0u8; 8];
 
-//     #[cfg(test)]
-//     pub fn get_buf(&mut self) -> Vec<u8> {
-//         self.buf.clone()
-//     }
-// }
+            while let Ok(read_len) = serialport.read(&mut buf) {
+                let data = &buf[0..read_len];
+
+                let decoded = cobs.push(data);
+                let switch_infos: Vec<SwitchInfo> = decoded
+                    .iter()
+                    .filter_map(|data| raw_to_switch_info(data))
+                    .collect();
+
+                if let Err(e) = action_tx.send(ActionMessage::SwitchInfos(switch_infos)) {
+                    // TODO: エラーハンドリング
+                };
+
+                if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+            }
+        });
+
+        // 処理スレッド
+        let worker_status_cloned = worker_status.clone();
+        let exit_flag_cloned = exit_flag.clone();
+        thread::spawn(move || {
+            let worker_status = worker_status_cloned;
+            let action_rx = action_rx;
+            let exit_flag = exit_flag_cloned;
+
+            while let Ok(cmd) = action_rx.recv() {
+                if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+            }
+        });
+
+        Ok(Self {
+            worker_status,
+            exit_flag,
+            control_tx,
+        })
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.exit_flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -433,32 +492,26 @@ mod tests {
 
     #[test]
     fn dec() {
-        // let mut decoder = Decoder::new();
+        let mut receiver = CobsReceiver::new();
 
-        // decoder.receive(&[01, 01, 00]);
-        // decoder.receive(&[01, 01, 01, 00]);
-        // decoder.receive(&[01, 02, 11, 01, 00]);
-        // println!("before A: {:?}", decoder.get_buf());
+        
+        let result = receiver.push(&[
+            0x02, 0x01, 0x00, // 単一のデータ(Data1)
+            0x04, 0x11, // 次のデータの断片(Data2)
+        ]);
 
-        // println!("{:?}", decoder.process_buffer().unwrap());
-        // println!("{:?}", decoder.process_buffer().unwrap());
-        // println!("{:?}", decoder.process_buffer().unwrap());
-        // // decoder.process_buffer().unwrap();
+        assert_eq!(result, vec![
+            vec![0x01],
+        ]);
 
-        // println!("after A: {:?}", decoder.get_buf());
+        let result = receiver.push(&[
+            0x22, 0x33, 0x00, // (Data2)
+            0x02, 0xAA, 0x00, // (Data3)
+        ]);
 
-        // decoder.receive(&[01, 01, 00, 01]);
-        // decoder.receive(&[01, 01, 00, 01]);
-        // decoder.receive(&[02, 11, 01, 00]);
-
-        // println!("before B: {:?}", decoder.get_buf());
-
-        // println!("{:?}", decoder.process_buffer().unwrap());
-        // println!("{:?}", decoder.process_buffer().unwrap());
-        // println!("{:?}", decoder.process_buffer().unwrap());
-
-        // println!("after B: {:?}", decoder.get_buf());
-
-        // assert_eq!(decoder.process_buffer(), None);
+        assert_eq!(result, vec![
+            vec![0x11, 0x22, 0x33],
+            vec![0xAA],
+        ]);
     }
-}
+}   
