@@ -358,14 +358,14 @@ impl CobsReceiver {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-struct WorkerStatus {
+pub struct WorkerStatus {
     worker_write: bool,
     worker_read: bool,
     worker_action: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
-enum ControlMessage {
+pub enum ControlMessage {
     /// すべてのスイッチの情報を送信するように要求する
     RequestAllSwitchInfo,
     /// スイッチの情報を連続的に送信するモードを開始するように要求する
@@ -378,12 +378,12 @@ enum ControlMessage {
 }
 
 #[derive(Debug, Clone)]
-enum ActionMessage {
+pub enum ActionMessage {
     SwitchInfos(Vec<SwitchInfo>),
 }
 
 #[derive(Debug, thiserror::Error)]
-enum ConnectionError {
+pub enum ConnectionError {
     #[error("{0}")]
     CommunicationError(#[from] serialport::Error),
 }
