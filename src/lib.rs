@@ -1,3 +1,8 @@
+use std::{
+    sync::{Arc, Mutex, atomic::AtomicBool, mpsc},
+    thread,
+};
+
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serialport::{SerialPort, SerialPortType};
@@ -317,9 +322,7 @@ pub struct CobsReceiver {
 
 impl CobsReceiver {
     pub fn new() -> Self {
-        Self {
-            buffer: Vec::new(),
-        }
+        Self { buffer: Vec::new() }
     }
 
     pub fn push(&mut self, data: &[u8]) -> Vec<Vec<u8>> {
@@ -385,14 +388,15 @@ enum ConnectionError {
     CommunicationError(#[from] serialport::Error),
 }
 
-struct Connection {
+pub struct Connection {
     worker_status: Arc<Mutex<WorkerStatus>>,
     exit_flag: Arc<AtomicBool>,
-    control_tx: Sender<ControlMessage>,
+    control_tx: mpsc::Sender<ControlMessage>,
+    // action_rx: mpsc::Receiver<ActionMessage>,
 }
 
 impl Connection {
-    fn new<'a>(
+    pub fn new<'a>(
         path: impl Into<std::borrow::Cow<'a, str>>,
         baud_rate: u32,
     ) -> Result<Self, ConnectionError> {
@@ -475,6 +479,7 @@ impl Connection {
             worker_status,
             exit_flag,
             control_tx,
+            // action_rx,
         })
     }
 }
@@ -494,24 +499,18 @@ mod tests {
     fn dec() {
         let mut receiver = CobsReceiver::new();
 
-        
         let result = receiver.push(&[
             0x02, 0x01, 0x00, // 単一のデータ(Data1)
             0x04, 0x11, // 次のデータの断片(Data2)
         ]);
 
-        assert_eq!(result, vec![
-            vec![0x01],
-        ]);
+        assert_eq!(result, vec![vec![0x01],]);
 
         let result = receiver.push(&[
             0x22, 0x33, 0x00, // (Data2)
             0x02, 0xAA, 0x00, // (Data3)
         ]);
 
-        assert_eq!(result, vec![
-            vec![0x11, 0x22, 0x33],
-            vec![0xAA],
-        ]);
+        assert_eq!(result, vec![vec![0x11, 0x22, 0x33], vec![0xAA],]);
     }
-}   
+}
