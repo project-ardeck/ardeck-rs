@@ -425,7 +425,7 @@ impl Connection {
 
         let serialport = serialport::new(path, baud_rate).open()?;
 
-        log::info("Connected to {}.", path);
+        // log::info!("Connected to {:?}.", path);
 
         // 外から送信用への橋渡し
         let (control_tx, control_rx) = std::sync::mpsc::channel::<ControlMessage>();
@@ -442,7 +442,7 @@ impl Connection {
             let control_rx = control_rx;
             let exit_flag = exit_flag_cloned;
 
-            log::info("The control thread has been created.");
+            log::info!("The control thread has been created.");
 
             loop {
                 if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
@@ -527,7 +527,7 @@ impl Connection {
 
             let mut buf = [0u8; 8];
 
-            log::info("The receive thread has been created.");
+            log::info!("The receive thread has been created.");
 
             loop {
                 if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
@@ -560,11 +560,11 @@ impl Connection {
         })
     }
 
-    fn action_receiver(&self) -> Arc<Mutex<mpsc::Receiver<Vec<SwitchInfo>>>> {
+    pub fn action_receiver(&self) -> Arc<Mutex<mpsc::Receiver<Vec<SwitchInfo>>>> {
         self.action_rx.clone()
     }
 
-    fn exit_flag(&self) -> Arc<AtomicBool> {
+    pub fn exit_flag(&self) -> Arc<AtomicBool> {
         self.exit_flag.clone()
     }
 }
