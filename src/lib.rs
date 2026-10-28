@@ -567,6 +567,10 @@ impl Connection {
     pub fn exit_flag(&self) -> Arc<AtomicBool> {
         self.exit_flag.clone()
     }
+
+    pub fn conrol_sender(&self) -> &mpsc::Sender<ControlMessage> {
+        &self.control_tx
+    }
 }
 
 impl Drop for Connection {
