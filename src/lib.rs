@@ -7,6 +7,11 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serialport::{SerialPort, SerialPortType};
 
+static CMD_REQUEST_ALL_SWITCH_INFO: u8 = 0x01;
+static CMD_REQUEST_START_CONTINUOUS_MODE: u8 = 0x11;
+static CMD_REQUEST_START_TRIGGERED_CONTINUOUS_MODE: u8 = 0x12;
+static CMD_REQUEST_STOP_CONTINUOUS_MODE: u8 = 0x1F;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Serialport error: {0}")]
@@ -377,22 +382,36 @@ pub enum ControlMessage {
     RequestStopContinuousMode,
 }
 
-#[derive(Debug, Clone)]
-pub enum ActionMessage {
-    SwitchInfos(Vec<SwitchInfo>),
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionError {
     #[error("{0}")]
     CommunicationError(#[from] serialport::Error),
 }
 
+/// ardeckデバイスへの接続とデータ送受信
+///
+/// # Examples
+/// ```
+/// let connection = Connection::new("COM3", 9600).unwrap();
+///
+/// let rx = connection.action_receiver();
+/// let rx = rx.lock().unwrap();
+/// let exit_flag = connection.exit_flag();
+///
+/// loop {
+///     if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+///         break;
+///     }
+///     if let Ok(switch_info) = rx.recv() {
+///         println!("{:?}", switch_info);
+///     }
+/// }
+/// ```
 pub struct Connection {
     worker_status: Arc<Mutex<WorkerStatus>>,
     exit_flag: Arc<AtomicBool>,
     control_tx: mpsc::Sender<ControlMessage>,
-    // action_rx: mpsc::Receiver<ActionMessage>,
+    action_rx: Arc<Mutex<mpsc::Receiver<Vec<SwitchInfo>>>>,
 }
 
 impl Connection {
@@ -406,10 +425,12 @@ impl Connection {
 
         let serialport = serialport::new(path, baud_rate).open()?;
 
+        log::info("Connected to {}.", path);
+
         // 外から送信用への橋渡し
         let (control_tx, control_rx) = std::sync::mpsc::channel::<ControlMessage>();
         // 受信から処理への橋渡し
-        let (action_tx, action_rx) = std::sync::mpsc::channel::<ActionMessage>();
+        let (action_tx, action_rx) = std::sync::mpsc::channel::<Vec<SwitchInfo>>();
 
         // 送信用のスレッドを作る
         let worker_status_cloned = worker_status.clone();
@@ -421,9 +442,74 @@ impl Connection {
             let control_rx = control_rx;
             let exit_flag = exit_flag_cloned;
 
-            while let Ok(cmd) = control_rx.recv() {
+            log::info("The control thread has been created.");
+
+            loop {
                 if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
+                }
+
+                if let Ok(cmd) = control_rx.recv() {
+                    match cmd {
+                        ControlMessage::RequestAllSwitchInfo => {
+                            if let Err(e) = serialport.write(&[CMD_REQUEST_ALL_SWITCH_INFO]) {
+                                log::error!("Write error: CMD_REQUEST_ALL_SWITCH_INFO\n{}", e);
+                                break;
+                            };
+
+                            if let Err(e) = serialport.flush() {
+                                log::error!("Flush error: CMD_REQUEST_ALL_SWITCH_INFO\n{}", e);
+                                break;
+                            };
+                        }
+                        ControlMessage::RequestStartContinuousMode => {
+                            if let Err(e) = serialport.write(&[CMD_REQUEST_START_CONTINUOUS_MODE]) {
+                                log::error!(
+                                    "Write error: CMD_REQUEST_START_CONTINUOUS_MODE\n{}",
+                                    e
+                                );
+                                break;
+                            };
+
+                            if let Err(e) = serialport.flush() {
+                                log::error!(
+                                    "Flush error: CMD_REQUEST_START_CONTINUOUS_MODE\n{}",
+                                    e
+                                );
+                                break;
+                            };
+                        }
+                        ControlMessage::RequestStartTriggeredContinuousMode => {
+                            if let Err(e) =
+                                serialport.write(&[CMD_REQUEST_START_TRIGGERED_CONTINUOUS_MODE])
+                            {
+                                log::error!(
+                                    "Write error: CMD_REQUEST_START_TRIGGERED_CONTINUOUS_MODE\n{}",
+                                    e
+                                );
+                                break;
+                            };
+
+                            if let Err(e) = serialport.flush() {
+                                log::error!(
+                                    "Flush error: CMD_REQUEST_START_TRIGGERED_CONTINUOUS_MODE\n{}",
+                                    e
+                                );
+                                break;
+                            };
+                        }
+                        ControlMessage::RequestStopContinuousMode => {
+                            if let Err(e) = serialport.write(&[CMD_REQUEST_STOP_CONTINUOUS_MODE]) {
+                                log::error!("Write error: CMD_REQUEST_STOP_CONTINUOUS_MODE\n{}", e);
+                                break;
+                            };
+
+                            if let Err(e) = serialport.flush() {
+                                log::error!("Flush error: CMD_REQUEST_STOP_CONTINUOUS_MODE\n{}", e);
+                                break;
+                            };
+                        }
+                    }
                 }
             }
         });
@@ -441,46 +527,45 @@ impl Connection {
 
             let mut buf = [0u8; 8];
 
-            while let Ok(read_len) = serialport.read(&mut buf) {
-                let data = &buf[0..read_len];
+            log::info("The receive thread has been created.");
 
-                let decoded = cobs.push(data);
-                let switch_infos: Vec<SwitchInfo> = decoded
-                    .iter()
-                    .filter_map(|data| raw_to_switch_info(data))
-                    .collect();
-
-                if let Err(e) = action_tx.send(ActionMessage::SwitchInfos(switch_infos)) {
-                    // TODO: エラーハンドリング
-                };
-
+            loop {
                 if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
+                }
+
+                if let Ok(read_len) = serialport.read(&mut buf) {
+                    let data = &buf[0..read_len];
+
+                    let decoded = cobs.push(data);
+                    let switch_infos: Vec<SwitchInfo> = decoded
+                        .iter()
+                        .filter_map(|data| raw_to_switch_info(data))
+                        .collect();
+
+                    if let Err(e) = action_tx.send(switch_infos) {
+                        // TODO: エラーハンドリング
+                    };
                 }
             }
         });
 
-        // 処理スレッド
-        let worker_status_cloned = worker_status.clone();
-        let exit_flag_cloned = exit_flag.clone();
-        thread::spawn(move || {
-            let worker_status = worker_status_cloned;
-            let action_rx = action_rx;
-            let exit_flag = exit_flag_cloned;
-
-            while let Ok(cmd) = action_rx.recv() {
-                if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
-                }
-            }
-        });
+        let action_rx = Arc::new(Mutex::new(action_rx));
 
         Ok(Self {
             worker_status,
             exit_flag,
             control_tx,
-            // action_rx,
+            action_rx,
         })
+    }
+
+    fn action_receiver(&self) -> Arc<Mutex<mpsc::Receiver<Vec<SwitchInfo>>>> {
+        self.action_rx.clone()
+    }
+
+    fn exit_flag(&self) -> Arc<AtomicBool> {
+        self.exit_flag.clone()
     }
 }
 
