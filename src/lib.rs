@@ -334,6 +334,7 @@ impl CobsReceiver {
         let mut frames = Vec::new();
 
         for &byte in data {
+            self.buffer.push(byte);
             if byte == 0x00 {
                 if self.buffer.is_empty() {
                     // 空フレーム
@@ -344,6 +345,8 @@ impl CobsReceiver {
                 // 所有権ではなくて値そのものを移動してくるイメージ？移動された元の変数は空になる。
                 let encoded = std::mem::take(&mut self.buffer);
 
+                println!("encoded: {:?}", encoded);
+
                 match dec_cobs(&encoded) {
                     Some(decoded) => {
                         frames.push(decoded);
@@ -353,8 +356,6 @@ impl CobsReceiver {
                         // ログ等
                     }
                 }
-            } else {
-                self.buffer.push(byte);
             }
         }
 
