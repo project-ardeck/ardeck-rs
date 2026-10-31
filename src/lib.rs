@@ -541,7 +541,7 @@ impl Connection {
                         .collect();
 
                     if let Err(e) = action_tx.send(switch_infos) {
-                        // TODO: エラーハンドリング
+                        log::error!("Failed to send action informations: {}", e);
                     };
                 }
             }
