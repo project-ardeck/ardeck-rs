@@ -25,7 +25,6 @@ pub enum Error {
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub enum SwitchKind {
     /// デジタルスイッチ。タクトスイッチ、トグルスイッチなど。
     #[default]
@@ -35,7 +34,6 @@ pub enum SwitchKind {
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct SwitchInfo {
     kind: SwitchKind,
     /// スイッチが接続されているピン番号。
@@ -167,7 +165,6 @@ impl DeviceInfosFilterTrait for Vec<DeviceInfo> {
 /// ]
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ProfileItem {
     switch_type: SwitchKind,
     switch_id: usize,
@@ -194,7 +191,6 @@ impl ProfileItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Profile {
     /// プロファイルフォーマットバージョン: 1
     version: usize,
