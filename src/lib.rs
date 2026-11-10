@@ -214,6 +214,18 @@ impl Profile {
     }
 }
 
+fn calc_checksum(bytes: impl AsRef<[u8]>) -> u8 {
+    let bytes = bytes.as_ref();
+
+    let mut sum: u8 = 0;
+
+    for &byte in bytes {
+        sum = sum.wrapping_add(byte);
+    }
+
+    sum
+}
+
 /// COBS形式のデータを生バイト値に変換する。
 ///
 /// 正しく変換できなかった場合、[`None`]を返す。
@@ -345,7 +357,23 @@ impl CobsReceiver {
 
                 match dec_cobs(&encoded) {
                     Some(decoded) => {
-                        frames.push(decoded);
+                        if decoded.len() < 1 {
+                            // checksumが存在しない
+                            continue;
+                        }
+                    
+                        let payload_len = decoded.len() - 1;
+                        let payload = &decoded[..payload_len];
+                        let received_checksum = decoded[payload_len];
+                    
+                        let calculated_checksum = calc_checksum(payload);
+                    
+                        if received_checksum == calculated_checksum {
+                            frames.push(payload.to_vec());
+                        } else {
+                            // checksum不一致
+                            // ログ等
+                        }
                     }
                     None => {
                         // 不正なCOBSフレーム
