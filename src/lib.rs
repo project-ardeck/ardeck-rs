@@ -1,6 +1,12 @@
 use std::{
-    sync::{Arc, Mutex, atomic::AtomicBool, mpsc},
+    borrow::Cow,
+    sync::{
+        Arc, Mutex,
+        atomic::AtomicBool,
+        mpsc::{self, Receiver, Sender},
+    },
     thread,
+    time::Duration,
 };
 
 use jiff::Timestamp;
@@ -8,9 +14,8 @@ use serde::{Deserialize, Serialize};
 use serialport::{SerialPort, SerialPortType};
 
 static CMD_REQUEST_ALL_SWITCH_INFO: u8 = 0x01;
-static CMD_REQUEST_START_CONTINUOUS_MODE: u8 = 0x11;
-static CMD_REQUEST_START_TRIGGERED_CONTINUOUS_MODE: u8 = 0x12;
-static CMD_REQUEST_STOP_CONTINUOUS_MODE: u8 = 0x1F;
+static CMD_REQUEST_START_AUTO_MODE: u8 = 0x10;
+static CMD_REQUEST_STOP_AUTO_MODE: u8 = 0x1F;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -361,13 +366,13 @@ impl CobsReceiver {
                             // checksumが存在しない
                             continue;
                         }
-                    
+
                         let payload_len = decoded.len() - 1;
                         let payload = &decoded[..payload_len];
                         let received_checksum = decoded[payload_len];
-                    
+
                         let calculated_checksum = calc_checksum(payload);
-                    
+
                         if received_checksum == calculated_checksum {
                             frames.push(payload.to_vec());
                         } else {
@@ -398,19 +403,59 @@ pub struct WorkerStatus {
 pub enum ControlMessage {
     /// すべてのスイッチの情報を送信するように要求する
     RequestAllSwitchInfo,
-    /// スイッチの情報を連続的に送信するモードを開始するように要求する
-    RequestStartContinuousMode,
-    /// スイッチの情報を、スイッチの状態が変化したときに限って
-    /// 連続的に送信するモードを開始するように要求する
-    RequestStartTriggeredContinuousMode,
-    /// 連続的に送信するモード(上二つ)のいずれかのモードを停止するように要求する
-    RequestStopContinuousMode,
+    /// 今後、Ardeckから自動的にスイッチ情報を送るように要求する
+    RequestStartAutoMode,
+    /// 自動送信を停止するように要求する
+    RequestStopAutoMode,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionError {
     #[error("{0}")]
     CommunicationError(#[from] serialport::Error),
+}
+
+#[derive(Debug, Clone)]
+pub struct ConnectionOption<'a> {
+    port_name: Cow<'a, str>,
+    baud_rate: u32,
+    auto_reconnect: bool,
+    auto_recv_mode: bool,
+    // reconnect_interval: Duration,
+    // read_timeout: Duration,
+}
+
+impl<'a> ConnectionOption<'a> {
+    pub fn port_name(mut self, path: impl Into<std::borrow::Cow<'a, str>>) -> Self {
+        self.port_name = path.into();
+        self
+    }
+
+    pub fn baud_rate(mut self, rate: u32) -> Self {
+        self.baud_rate = rate;
+        self
+    }
+
+    pub fn auto_reconnect(mut self, opt: bool) -> Self {
+        self.auto_reconnect = opt;
+        self
+    }
+
+    pub fn auto_recv_mode(mut self, opt: bool) -> Self {
+        self.auto_recv_mode = opt;
+        self
+    }
+}
+
+impl<'a> Default for ConnectionOption<'a> {
+    fn default() -> Self {
+        Self {
+            port_name: "".into(),
+            baud_rate: 9600,
+            auto_reconnect: true,
+            auto_recv_mode: false,
+        }
+    }
 }
 
 /// ardeckデバイスへの接続とデータ送受信
@@ -437,18 +482,20 @@ pub struct Connection {
     exit_flag: Arc<AtomicBool>,
     control_tx: mpsc::Sender<ControlMessage>,
     action_rx: Arc<Mutex<mpsc::Receiver<Vec<SwitchInfo>>>>,
+    is_auto_reconnect: Arc<AtomicBool>,
+    is_auto_recv_mode: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
 }
 
 impl Connection {
-    pub fn new<'a>(
-        path: impl Into<std::borrow::Cow<'a, str>>,
-        baud_rate: u32,
-    ) -> Result<Self, ConnectionError> {
+    pub fn new<'a>(option: ConnectionOption) -> Result<Self, ConnectionError> {
         // 全スレッド共有で処理状況のステータス保管用
         let worker_status = Arc::new(Mutex::new(WorkerStatus::default()));
         let exit_flag = Arc::new(AtomicBool::new(false));
-
-        let serialport = serialport::new(path, baud_rate).open()?;
+        let port_name = option.port_name.to_string();
+        let baud_rate = option.baud_rate;
+        let is_auto_reconnect = Arc::new(AtomicBool::new(option.auto_reconnect));
+        let is_auto_recv_mode = Arc::new(AtomicBool::new(option.auto_recv_mode));
 
         // log::info!("Connected to {:?}.", path);
 
@@ -457,122 +504,21 @@ impl Connection {
         // 受信から処理への橋渡し
         let (action_tx, action_rx) = std::sync::mpsc::channel::<Vec<SwitchInfo>>();
 
-        // 送信用のスレッドを作る
-        let worker_status_cloned = worker_status.clone();
-        let serialport_cloned = serialport.try_clone()?;
-        let exit_flag_cloned = exit_flag.clone();
-        thread::spawn(move || {
-            let worker_status = worker_status_cloned;
-            let mut serialport = serialport_cloned;
-            let control_rx = control_rx;
-            let exit_flag = exit_flag_cloned;
-
-            log::info!("The control thread has been created.");
-
-            loop {
-                if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
-                }
-
-                if let Ok(cmd) = control_rx.recv() {
-                    match cmd {
-                        ControlMessage::RequestAllSwitchInfo => {
-                            if let Err(e) = serialport.write(&[CMD_REQUEST_ALL_SWITCH_INFO]) {
-                                log::error!("Write error: CMD_REQUEST_ALL_SWITCH_INFO\n{}", e);
-                                break;
-                            };
-
-                            if let Err(e) = serialport.flush() {
-                                log::error!("Flush error: CMD_REQUEST_ALL_SWITCH_INFO\n{}", e);
-                                break;
-                            };
-                        }
-                        ControlMessage::RequestStartContinuousMode => {
-                            if let Err(e) = serialport.write(&[CMD_REQUEST_START_CONTINUOUS_MODE]) {
-                                log::error!(
-                                    "Write error: CMD_REQUEST_START_CONTINUOUS_MODE\n{}",
-                                    e
-                                );
-                                break;
-                            };
-
-                            if let Err(e) = serialport.flush() {
-                                log::error!(
-                                    "Flush error: CMD_REQUEST_START_CONTINUOUS_MODE\n{}",
-                                    e
-                                );
-                                break;
-                            };
-                        }
-                        ControlMessage::RequestStartTriggeredContinuousMode => {
-                            if let Err(e) =
-                                serialport.write(&[CMD_REQUEST_START_TRIGGERED_CONTINUOUS_MODE])
-                            {
-                                log::error!(
-                                    "Write error: CMD_REQUEST_START_TRIGGERED_CONTINUOUS_MODE\n{}",
-                                    e
-                                );
-                                break;
-                            };
-
-                            if let Err(e) = serialport.flush() {
-                                log::error!(
-                                    "Flush error: CMD_REQUEST_START_TRIGGERED_CONTINUOUS_MODE\n{}",
-                                    e
-                                );
-                                break;
-                            };
-                        }
-                        ControlMessage::RequestStopContinuousMode => {
-                            if let Err(e) = serialport.write(&[CMD_REQUEST_STOP_CONTINUOUS_MODE]) {
-                                log::error!("Write error: CMD_REQUEST_STOP_CONTINUOUS_MODE\n{}", e);
-                                break;
-                            };
-
-                            if let Err(e) = serialport.flush() {
-                                log::error!("Flush error: CMD_REQUEST_STOP_CONTINUOUS_MODE\n{}", e);
-                                break;
-                            };
-                        }
-                    }
-                }
-            }
-        });
-
-        // 受信用のスレッドを作る
-        let worker_status_cloned = worker_status.clone();
-        let serialport_cloned = serialport.try_clone()?;
-        let exit_flag_cloned = exit_flag.clone();
-        thread::spawn(move || {
-            let worker_status = worker_status_cloned;
-            let mut serialport = serialport_cloned;
-            let action_tx = action_tx;
-            let exit_flag = exit_flag_cloned;
-            let mut cobs = CobsReceiver::new();
-
-            let mut buf = [0u8; 8];
-
-            log::info!("The receive thread has been created.");
-
-            loop {
-                if exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
-                }
-
-                if let Ok(read_len) = serialport.read(&mut buf) {
-                    let data = &buf[0..read_len];
-
-                    let decoded = cobs.push(data);
-                    let switch_infos: Vec<SwitchInfo> = decoded
-                        .iter()
-                        .filter_map(|data| raw_to_switch_info(data))
-                        .collect();
-
-                    if let Err(e) = action_tx.send(switch_infos) {
-                        log::error!("Failed to send action informations: {}", e);
-                    };
-                }
-            }
+        let worker_exit_flag = Arc::clone(&exit_flag);
+        let worker_auto_reconnect = Arc::clone(&is_auto_reconnect);
+        let worker_auto_recv_mode = Arc::clone(&is_auto_recv_mode);
+        let worker = thread::spawn(move || {
+            run_worker(
+                port_name,
+                baud_rate,
+                worker_auto_reconnect,
+                Duration::from_millis(100), // FIXME
+                Duration::from_millis(100), // FIXME
+                worker_auto_recv_mode,
+                worker_exit_flag,
+                control_rx,
+                action_tx,
+            )
         });
 
         let action_rx = Arc::new(Mutex::new(action_rx));
@@ -582,6 +528,9 @@ impl Connection {
             exit_flag,
             control_tx,
             action_rx,
+            is_auto_reconnect,
+            is_auto_recv_mode,
+            worker: Some(worker),
         })
     }
 
@@ -596,14 +545,202 @@ impl Connection {
     pub fn conrol_sender(&self) -> &mpsc::Sender<ControlMessage> {
         &self.control_tx
     }
+
+    /// Ardeckにすべてのスイッチ情報を送信するように要求します
+    pub fn request_all_switch_info(&self) {
+        self.control_tx
+            .send(ControlMessage::RequestAllSwitchInfo)
+            .ok();
+    }
+
+    /// Ardeckにスイッチの状態が変わったときに自動的に送信するように要求します
+    pub fn request_start_auto_mode(&mut self) {
+        if self
+            .control_tx
+            .send(ControlMessage::RequestStartAutoMode)
+            .is_ok()
+        {
+            self.is_auto_recv_mode
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Ardeckにスイッチ情報の自動送信をやめるように要求します
+    pub fn request_stop_auto_mode(&mut self) {
+        if self
+            .control_tx
+            .send(ControlMessage::RequestStopAutoMode)
+            .is_ok()
+        {
+            self.is_auto_recv_mode
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 impl Drop for Connection {
     fn drop(&mut self) {
+        self.request_stop_auto_mode();
         self.exit_flag
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
+
+fn run_worker(
+    port_name: String,
+    baud_rate: u32,
+    auto_reconnect: Arc<AtomicBool>,
+    reconnect_interval: Duration,
+    read_timeout: Duration,
+    auto_recv_mode: Arc<AtomicBool>,
+    exit_flag: Arc<AtomicBool>,
+    control_rx: Receiver<ControlMessage>,
+    action_tx: Sender<Vec<SwitchInfo>>,
+) {
+    let mut buf = [0u8; 8];
+
+    loop {
+        if exit_flag.load(std::sync::atomic::Ordering::Acquire) {
+            break;
+        };
+
+        let mut serialport = match serialport::new(&port_name, baud_rate)
+            .timeout(read_timeout)
+            .open()
+        {
+            Ok(port) => {
+                log::info!("Connected to: {}", port_name);
+                port
+            }
+            Err(e) => {
+                log::error!("Failed to open serial port: {} / {}", port_name, e);
+
+                if !auto_reconnect.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
+
+                // if
+
+                continue;
+            }
+        };
+
+        let mut cobs = CobsReceiver::new();
+
+        let mut disconnect_reason: Option<String> = None;
+
+        if auto_recv_mode.load(std::sync::atomic::Ordering::Acquire) {
+            if let Err(e) = serialport
+                .write_all(&[CMD_REQUEST_START_AUTO_MODE])
+                .and_then(|_| serialport.flush())
+            {
+                continue;
+            };
+        }
+
+        'recvloop: loop {
+            if exit_flag.load(std::sync::atomic::Ordering::Acquire) {
+                if let Err(e) = serialport
+                    .write_all(&[CMD_REQUEST_STOP_AUTO_MODE])
+                    .and_then(|_| serialport.flush())
+                {
+                    log::error!("Failed to stop auto mode: {}", e);
+                }
+
+                break 'recvloop;
+            }
+
+            loop {
+                match control_rx.try_recv() {
+                    Ok(cmd) => match cmd {
+                        ControlMessage::RequestAllSwitchInfo => {
+                            if let Err(e) = serialport
+                                .write_all(&[CMD_REQUEST_ALL_SWITCH_INFO])
+                                .and_then(|_| serialport.flush())
+                            {
+                                break 'recvloop;
+                            };
+                        }
+                        ControlMessage::RequestStartAutoMode => {
+                            if let Err(e) = serialport
+                                .write_all(&[CMD_REQUEST_START_AUTO_MODE])
+                                .and_then(|_| serialport.flush())
+                            {
+                                break 'recvloop;
+                            };
+                        }
+                        ControlMessage::RequestStopAutoMode => {
+                            if let Err(e) = serialport
+                                .write_all(&[CMD_REQUEST_STOP_AUTO_MODE])
+                                .and_then(|_| serialport.flush())
+                            {
+                                break 'recvloop;
+                            };
+                        }
+                    },
+                    Err(mpsc::TryRecvError::Empty) => {
+                        break;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        exit_flag.store(true, std::sync::atomic::Ordering::Release);
+                        break 'recvloop;
+                    }
+                }
+            }
+
+            match serialport.read(&mut buf) {
+                Ok(read_len) => {
+                    let data = &buf[0..read_len];
+
+                    let decoded = cobs.push(data);
+                    let switch_infos: Vec<SwitchInfo> = decoded
+                        .iter()
+                        .filter_map(|data| raw_to_switch_info(data))
+                        .collect();
+
+                    if let Err(e) = action_tx.send(switch_infos) {
+                        log::error!("Failed to send action informations: {}", e);
+
+                        if let Err(e) = serialport
+                            .write_all(&[CMD_REQUEST_STOP_AUTO_MODE])
+                            .and_then(|_| serialport.flush())
+                        {
+                            log::error!("Failed to stop auto mode: {}", e);
+                        }
+                    };
+                }
+                Err(e) => match e.kind() {
+                    std::io::ErrorKind::TimedOut => {}
+                    _ => break 'recvloop,
+                },
+            }
+        }
+
+        if !auto_reconnect.load(std::sync::atomic::Ordering::Acquire) {
+            break;
+        } else {
+            thread::sleep(reconnect_interval);
+        }
+    }
+}
+
+// fn wait_or_exit(exit_flag: &AtomicBool, duration: Duration) -> bool {
+//     let deadline = Instant::now() + duration;
+
+//     loop {
+//         if exit_flag.load(Ordering::Acquire) {
+//             return true;
+//         }
+
+//         let remaining = deadline.saturating_duration_since(Instant::now());
+
+//         if remaining.is_zero() {
+//             return false;
+//         }
+
+//         thread::sleep(remaining.min(Duration::from_millis(50)));
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
